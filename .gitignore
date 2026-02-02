@@ -1,5 +1,9 @@
 # Environment files with credentials
 .env
+
+# Log files (may contain sensitive data)
+logs/
+*.log
 .env.local
 .env.*.local
 
