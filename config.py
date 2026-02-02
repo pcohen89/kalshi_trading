@@ -19,7 +19,7 @@ load_dotenv(_env_path)
 # API URLs for each environment
 API_URLS = {
     "sandbox": "https://demo-api.kalshi.co/trade-api/v2",
-    "production": "https://trading-api.kalshi.com/trade-api/v2",
+    "production": "https://api.elections.kalshi.com/trade-api/v2",
 }
 
 # Valid log levels

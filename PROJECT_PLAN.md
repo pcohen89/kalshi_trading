@@ -44,7 +44,7 @@ Build a minimal viable trading infrastructure for Kalshi that can connect to the
 - Validates required config exists, raises `ConfigurationError` if missing
 - Supports two environments with different API URLs:
   - Sandbox: `https://demo-api.kalshi.co/trade-api/v2`
-  - Production: `https://trading-api.kalshi.com/trade-api/v2`
+  - Production: `https://api.elections.kalshi.com/trade-api/v2`
 - Convenience functions: `get_config()`, `get_api_credentials()`, `get_api_base_url()`, `is_production()`
 
 **How to use config.py**:
@@ -64,21 +64,97 @@ base_url = get_api_base_url()
 **Environment setup**:
 - User has installed dependencies: `pip install -r requirements.txt`
 - User has created `.env` with valid Kalshi API credentials
-- Environment is set to `sandbox` for safe testing
+- Environment is set to `production` (user's preference)
 - Repository is initialized with git and pushed to GitHub
 
-### Next Task: Task 1 - Kalshi API Integration
+---
 
-**Start here**: Implement `kalshi_client.py` using the credentials from `config.py`.
+#### Task 1: Kalshi API Integration ✅
+**Status**: Complete
+**Date**: February 2025
+
+**What was implemented**:
+- `kalshi_client.py` - Full API client (521 lines) with all required methods
+- `tests/test_api_client.py` - Comprehensive test suite (24 tests)
+- `pytest.ini` - Test configuration with custom markers
+- `requirements.txt` - Added `cryptography>=41.0.0` for RSA signing
+- `.gitignore` - Added `*.pem` to protect private keys
+- `.env.example` - Updated with .pem file path instructions
+- `kalshi_private_key.pem` - Template file for user's private key
+
+**KalshiClient class features**:
+- RSA-PSS request signing (per Kalshi API v2 spec)
+- Automatic retry with exponential backoff (3 retries for 5xx errors)
+- Rate limit handling (429) with separate retry limit (5 retries)
+- Comprehensive error handling with `KalshiAPIError` exception
+- Request/response logging at INFO level
+- Session reuse for connection efficiency
+
+**Available methods**:
+```python
+from kalshi_client import KalshiClient
+
+client = KalshiClient()
+
+# Account
+client.get_balance()  # Returns: {balance, portfolio_value} in cents
+
+# Positions
+client.get_positions(limit=100, cursor=None)
+
+# Markets
+client.get_markets(limit=100, cursor=None, event_ticker=None, status=None)
+client.get_market(ticker)
+
+# Orders
+client.place_order(ticker, side, quantity, action="buy", order_type="market", price=None)
+client.cancel_order(order_id)
+client.get_order(order_id)
+client.get_orders(ticker=None, status=None, limit=100)
+
+# Fills
+client.get_fills(ticker=None, order_id=None, limit=100)
+```
+
+**Order placement notes**:
+- `side`: "yes" or "no"
+- `action`: "buy" or "sell" (to close positions)
+- `order_type`: "market" or "limit"
+- `price`: Required for limit orders, must be 1-99 cents
+- `quantity`: Must be positive integer
+
+**Private key setup**:
+The API secret must be stored as a `.pem` file (not inline in `.env`):
+1. Save private key to `kalshi_private_key.pem`
+2. Set `KALSHI_API_SECRET=./kalshi_private_key.pem` in `.env`
+
+**Test results**:
+- 18 unit tests (mocked) - all pass
+- 6 integration tests (live API) - all pass
+- Run unit tests: `pytest tests/test_api_client.py -m "not integration"`
+- Run integration tests: `pytest tests/test_api_client.py -m integration`
+- Run all: `pytest tests/test_api_client.py -v`
+
+**Important API notes**:
+- Production URL changed to `https://api.elections.kalshi.com/trade-api/v2`
+- All monetary values are in cents (divide by 100 for dollars)
+- Timestamps are Unix milliseconds for authentication
+
+---
+
+### Next Task: Task 2 - Simple Trade Execution Interface
+
+**Start here**: Implement `trade_executor.py` and `cli_interface.py` using `KalshiClient`.
 
 **Prerequisites are ready**:
-- ✅ Config system loads API key and secret from `.env`
-- ✅ API base URL is available via `get_api_base_url()`
-- ✅ Dependencies installed (requests library ready)
-- ✅ User has valid Kalshi sandbox credentials
+- ✅ `KalshiClient` provides all API methods needed
+- ✅ Can place market and limit orders
+- ✅ Can cancel orders and check status
+- ✅ Authentication and error handling working
 
 **Files to implement**:
-- `kalshi_client.py` - Currently just a placeholder comment
+- `trade_executor.py` - Wrapper functions for common trading operations
+- `cli_interface.py` - Interactive command-line interface
 
 ---
 
