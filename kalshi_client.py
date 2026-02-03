@@ -289,7 +289,18 @@ class KalshiClient:
     def _parse_error_response(self, response: requests.Response) -> dict:
         """Parse error response body."""
         try:
-            return response.json()
+            data = response.json()
+            # Handle nested error format: {"error": {"code": ..., "message": ..., "details": ...}}
+            if "error" in data and isinstance(data["error"], dict):
+                error = data["error"]
+                # Combine message and details for better error info
+                msg = error.get("message", "Unknown error")
+                details = error.get("details", "")
+                if details:
+                    data["message"] = f"{msg}: {details}"
+                else:
+                    data["message"] = msg
+            return data
         except ValueError:
             return {"message": response.text or "Unknown error"}
 
@@ -448,7 +459,13 @@ class KalshiClient:
             "type": order_type,
         }
 
+        # For market orders, use aggressive price to ensure execution
+        if order_type == "market" and price is None:
+            # Buy: willing to pay up to 99c, Sell: willing to accept down to 1c
+            price = 99 if action == "buy" else 1
+
         if price is not None:
+            # Convert price to yes_price format expected by API
             order_data["yes_price"] = price if side == "yes" else (100 - price)
 
         if client_order_id:
