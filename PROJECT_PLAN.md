@@ -213,17 +213,68 @@ python3 cli_interface.py
 
 ---
 
-### Next Task: Task 3 - Portfolio & Position Tracking
+#### Task 3: Portfolio & Position Tracking ⏳
+**Status**: Mostly complete — needs sold position tracking before closing out
+**Date**: February 2026
 
-**Start here**: Implement `portfolio_tracker.py` using `KalshiClient`.
+**What was implemented**:
+- `portfolio_tracker.py` - Full portfolio tracker (280 lines)
+- `tests/test_portfolio.py` - Comprehensive test suite (48 tests)
+- Added `get_settlements()` to `kalshi_client.py` for realized P&L
+
+**PortfolioTracker class features**:
+- Paginated fetching of positions, fills, and settlements
+- Midpoint pricing for mark-to-market (bid/ask midpoint, falls back to last_price)
+- Settled market handling (100c for winners, 0c for losers)
+- Graceful degradation — skips positions that fail price lookup
+- Formatted portfolio summary display matching CLI conventions
+
+**Available methods**:
+```python
+from portfolio_tracker import PortfolioTracker
+
+tracker = PortfolioTracker()
+
+# Positions
+tracker.get_current_positions()        # Open positions (non-zero only)
+tracker.calculate_position_pnl(pos)    # Unrealized P&L for one position
+tracker.calculate_total_pnl()          # Aggregate unrealized P&L
+
+# Realized P&L
+tracker.get_realized_pnl()             # From /portfolio/settlements endpoint
+
+# Display
+tracker.display_portfolio_summary()    # Formatted summary to stdout
+```
+
+**Key API discovery**:
+- `/portfolio/positions` does NOT include settled/finalized markets
+- Must use `/portfolio/settlements` for realized P&L (revenue, cost, fees)
+- `fee_cost` in settlements is a dollar string (e.g. "0.0900"), not cents
+
+**Test results**:
+- 48 unit tests (mocked) - all pass
+- Run tests: `pytest tests/test_portfolio.py -v`
+
+**Remaining before closing out Task 3**:
+- Realized P&L currently only captures settlements (markets that expired/resolved)
+- Need to also capture P&L from positions that were manually sold (closed via sell orders)
+- Sold positions generate fills but may not appear in settlements until the market itself settles
+- Should incorporate fill-based P&L for sold positions alongside settlement-based P&L
+
+---
+
+### Next Task: Task 4 - Trade Logging & History
+
+**Start here**: Implement `trade_logger.py`.
 
 **Prerequisites are ready**:
-- ✅ `KalshiClient` provides `get_positions()`, `get_balance()`, `get_fills()`
-- ✅ `TradeExecutor` provides market info lookups
+- ✅ `KalshiClient` provides `get_fills()`, `get_orders()`
+- ✅ `PortfolioTracker` provides position and P&L data
 - ✅ Authentication and error handling working
 
 **Files to implement**:
-- `portfolio_tracker.py` - Position tracking and P&L calculations
+- `trade_logger.py` - Trade logging and history
 
 ---
 
