@@ -188,6 +188,39 @@ class PortfolioTracker:
             logger.error("Failed to fetch fills: %s", e)
             raise PortfolioError(f"Failed to fetch fills: {e}")
 
+    def _fetch_all_settlements(self) -> list:
+        """
+        Fetch all settlements with pagination.
+
+        Returns:
+            List of all settlement dicts from the API.
+
+        Raises:
+            PortfolioError: If the API call fails.
+        """
+        all_settlements = []
+        cursor = None
+
+        try:
+            for _ in range(self.MAX_PAGES):
+                result = self.client.get_settlements(limit=100, cursor=cursor)
+
+                settlements = result.get("settlements") or []
+
+                if not settlements:
+                    break
+
+                all_settlements.extend(settlements)
+
+                cursor = result.get("cursor")
+                if not cursor:
+                    break
+
+            return all_settlements
+        except KalshiAPIError as e:
+            logger.error("Failed to fetch settlements: %s", e)
+            raise PortfolioError(f"Failed to fetch settlements: {e}")
+
     def _get_market_price(self, ticker: str) -> dict:
         """
         Get current pricing for a market.
@@ -357,43 +390,56 @@ class PortfolioTracker:
 
     def get_realized_pnl(self) -> dict:
         """
-        Get realized P&L from settled/closed positions.
+        Get realized P&L from settled positions.
 
-        Uses the realized_pnl field from the API's position data.
+        Uses the /portfolio/settlements endpoint which contains revenue,
+        cost, and fee data for all settled markets.
 
         Returns:
-            dict with: gross_pnl (sum of realized_pnl), total_fees (sum of
-            fees_paid), net_pnl (gross - fees), positions (list of position
-            dicts with realized P&L).
+            dict with: gross_pnl (total profit/loss before fees), total_fees,
+            net_pnl (gross - fees), settlements (list of per-settlement dicts).
 
         Raises:
-            PortfolioError: If fetching positions fails.
+            PortfolioError: If fetching settlements fails.
         """
-        all_positions = self._fetch_all_positions()
+        all_settlements = self._fetch_all_settlements()
 
         gross_pnl = 0
         total_fees = 0
-        realized_positions = []
+        settlement_details = []
 
-        for pos in all_positions:
-            realized = pos.get("realized_pnl", 0)
-            fees = pos.get("fees_paid", 0)
+        for s in all_settlements:
+            revenue = s.get("revenue", 0)
+            yes_cost = s.get("yes_total_cost", 0)
+            no_cost = s.get("no_total_cost", 0)
+            total_cost = yes_cost + no_cost
 
-            if realized or fees:
-                realized_positions.append({
-                    "ticker": pos.get("ticker", "UNKNOWN"),
-                    "realized_pnl": realized,
-                    "fees_paid": fees,
-                    "net_pnl": realized - fees,
-                })
-                gross_pnl += realized
-                total_fees += fees
+            # Parse fee_cost — API returns it as a dollar string like "0.0900"
+            fee_str = s.get("fee_cost", "0")
+            try:
+                fees = int(round(float(fee_str) * 100))
+            except (ValueError, TypeError):
+                fees = 0
+
+            pnl = revenue - total_cost
+
+            settlement_details.append({
+                "ticker": s.get("ticker", "UNKNOWN"),
+                "market_result": s.get("market_result", ""),
+                "revenue": revenue,
+                "total_cost": total_cost,
+                "realized_pnl": pnl,
+                "fees_paid": fees,
+                "net_pnl": pnl - fees,
+            })
+            gross_pnl += pnl
+            total_fees += fees
 
         return {
             "gross_pnl": gross_pnl,
             "total_fees": total_fees,
             "net_pnl": gross_pnl - total_fees,
-            "positions": realized_positions,
+            "settlements": settlement_details,
         }
 
     def display_portfolio_summary(self) -> None:

@@ -510,55 +510,63 @@ class TestGetRealizedPnl:
     """Tests for get_realized_pnl method."""
 
     def test_aggregates_realized_pnl(self, tracker, mock_client):
-        """Sums realized P&L across positions."""
-        mock_client.get_positions.return_value = {
-            "market_positions": [
-                {"ticker": "A", "position": 0, "realized_pnl": 500, "fees_paid": 20},
-                {"ticker": "B", "position": 0, "realized_pnl": -200, "fees_paid": 10},
+        """Sums realized P&L across settlements."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "A", "revenue": 500, "yes_total_cost": 275,
+                 "no_total_cost": 0, "fee_cost": "0.2000", "market_result": "yes"},
+                {"ticker": "B", "revenue": 0, "yes_total_cost": 200,
+                 "no_total_cost": 0, "fee_cost": "0.1000", "market_result": "no"},
             ],
             "cursor": "",
         }
 
         result = tracker.get_realized_pnl()
 
-        assert result["gross_pnl"] == 300
+        # A: pnl = 500 - 275 = 225, fees = 20
+        # B: pnl = 0 - 200 = -200, fees = 10
+        assert result["gross_pnl"] == 25
         assert result["total_fees"] == 30
-        assert result["net_pnl"] == 270
-        assert len(result["positions"]) == 2
-
-    def test_skips_positions_without_realized(self, tracker, mock_client):
-        """Excludes positions with no realized P&L or fees."""
-        mock_client.get_positions.return_value = {
-            "market_positions": [
-                {"ticker": "A", "position": 5, "realized_pnl": 0, "fees_paid": 0},
-                {"ticker": "B", "position": 0, "realized_pnl": 300, "fees_paid": 15},
-            ],
-            "cursor": "",
-        }
-
-        result = tracker.get_realized_pnl()
-
-        assert len(result["positions"]) == 1
-        assert result["positions"][0]["ticker"] == "B"
-
-    def test_includes_positions_with_fees_only(self, tracker, mock_client):
-        """Includes positions that have fees but zero realized P&L."""
-        mock_client.get_positions.return_value = {
-            "market_positions": [
-                {"ticker": "A", "position": 3, "realized_pnl": 0, "fees_paid": 5},
-            ],
-            "cursor": "",
-        }
-
-        result = tracker.get_realized_pnl()
-
-        assert len(result["positions"]) == 1
         assert result["net_pnl"] == -5
+        assert len(result["settlements"]) == 2
 
-    def test_empty_positions(self, tracker, mock_client):
-        """Handles no positions."""
-        mock_client.get_positions.return_value = {
-            "market_positions": [],
+    def test_settlement_with_no_cost(self, tracker, mock_client):
+        """Handles settlement with no cost (e.g. free position)."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "FREE", "revenue": 0, "yes_total_cost": 0,
+                 "no_total_cost": 0, "fee_cost": "0.0000", "market_result": "no"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        assert len(result["settlements"]) == 1
+        assert result["settlements"][0]["realized_pnl"] == 0
+        assert result["net_pnl"] == 0
+
+    def test_settlement_with_both_yes_and_no_cost(self, tracker, mock_client):
+        """Handles settlement where both yes and no costs exist."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "BOTH", "revenue": 300, "yes_total_cost": 100,
+                 "no_total_cost": 50, "fee_cost": "0.0500", "market_result": "yes"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        # pnl = 300 - 150 = 150, fees = 5
+        assert result["settlements"][0]["realized_pnl"] == 150
+        assert result["settlements"][0]["fees_paid"] == 5
+        assert result["net_pnl"] == 145
+
+    def test_empty_settlements(self, tracker, mock_client):
+        """Handles no settlements."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [],
             "cursor": "",
         }
 
@@ -567,16 +575,16 @@ class TestGetRealizedPnl:
         assert result["gross_pnl"] == 0
         assert result["total_fees"] == 0
         assert result["net_pnl"] == 0
-        assert result["positions"] == []
+        assert result["settlements"] == []
 
     def test_api_error_raises_portfolio_error(self, tracker, mock_client):
         """Translates KalshiAPIError to PortfolioError."""
-        mock_client.get_positions.side_effect = KalshiAPIError("Error", status_code=500)
+        mock_client.get_settlements.side_effect = KalshiAPIError("Error", status_code=500)
 
         with pytest.raises(PortfolioError) as exc_info:
             tracker.get_realized_pnl()
 
-        assert "Failed to fetch positions" in str(exc_info.value)
+        assert "Failed to fetch settlements" in str(exc_info.value)
 
 
 # =============================================================================
@@ -593,6 +601,9 @@ class TestDisplayPortfolioSummary:
         }
         mock_client.get_positions.return_value = {
             "market_positions": [], "cursor": "",
+        }
+        mock_client.get_settlements.return_value = {
+            "settlements": [], "cursor": "",
         }
 
         tracker.display_portfolio_summary()
@@ -611,6 +622,9 @@ class TestDisplayPortfolioSummary:
         mock_client.get_positions.return_value = {
             "market_positions": [], "cursor": "",
         }
+        mock_client.get_settlements.return_value = {
+            "settlements": [], "cursor": "",
+        }
 
         tracker.display_portfolio_summary()
 
@@ -622,8 +636,6 @@ class TestDisplayPortfolioSummary:
         mock_client.get_balance.return_value = {
             "balance": 25000, "portfolio_value": 4500,
         }
-        # First call: for calculate_total_pnl → get_current_positions
-        # Second call: for get_realized_pnl
         mock_client.get_positions.return_value = {
             "market_positions": [
                 {"ticker": "KXBTC", "position": 5, "market_exposure": 250,
@@ -636,6 +648,9 @@ class TestDisplayPortfolioSummary:
                 "yes_bid": 60, "yes_ask": 64, "last_price": 62,
                 "status": "active", "title": "Bitcoin Market", "result": "",
             }
+        }
+        mock_client.get_settlements.return_value = {
+            "settlements": [], "cursor": "",
         }
 
         tracker.display_portfolio_summary()
@@ -650,8 +665,12 @@ class TestDisplayPortfolioSummary:
             "balance": 25000, "portfolio_value": 0,
         }
         mock_client.get_positions.return_value = {
-            "market_positions": [
-                {"ticker": "OLD", "position": 0, "realized_pnl": 1250, "fees_paid": 30},
+            "market_positions": [], "cursor": "",
+        }
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "OLD", "revenue": 500, "yes_total_cost": 275,
+                 "no_total_cost": 0, "fee_cost": "0.0900", "market_result": "yes"},
             ],
             "cursor": "",
         }
@@ -660,9 +679,9 @@ class TestDisplayPortfolioSummary:
 
         output = capsys.readouterr().out
         assert "Realized P&L" in output
-        assert "+$12.50" in output
-        assert "$0.30" in output
-        assert "+$12.20" in output
+        assert "+$2.25" in output
+        assert "$0.09" in output
+        assert "+$2.16" in output
 
 
 # =============================================================================
@@ -704,3 +723,44 @@ class TestFetchAllFills:
             tracker._fetch_all_fills()
 
         assert "Failed to fetch fills" in str(exc_info.value)
+
+
+# =============================================================================
+# Fetch All Settlements Tests
+# =============================================================================
+
+class TestFetchAllSettlements:
+    """Tests for _fetch_all_settlements method."""
+
+    def test_fetches_settlements_single_page(self, tracker, mock_client):
+        """Fetches settlements from a single page."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [{"ticker": "A"}, {"ticker": "B"}],
+            "cursor": "",
+        }
+
+        result = tracker._fetch_all_settlements()
+
+        assert len(result) == 2
+        mock_client.get_settlements.assert_called_once_with(limit=100, cursor=None)
+
+    def test_fetches_settlements_multiple_pages(self, tracker, mock_client):
+        """Paginates through multiple pages of settlements."""
+        mock_client.get_settlements.side_effect = [
+            {"settlements": [{"ticker": "A"}], "cursor": "next"},
+            {"settlements": [{"ticker": "B"}], "cursor": ""},
+        ]
+
+        result = tracker._fetch_all_settlements()
+
+        assert len(result) == 2
+        assert mock_client.get_settlements.call_count == 2
+
+    def test_api_error_raises_portfolio_error(self, tracker, mock_client):
+        """Translates KalshiAPIError to PortfolioError."""
+        mock_client.get_settlements.side_effect = KalshiAPIError("Error", status_code=500)
+
+        with pytest.raises(PortfolioError) as exc_info:
+            tracker._fetch_all_settlements()
+
+        assert "Failed to fetch settlements" in str(exc_info.value)

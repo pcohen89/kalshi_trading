@@ -565,3 +565,30 @@ class KalshiClient:
             params["cursor"] = cursor
 
         return self._make_request("GET", "/portfolio/fills", params=params)
+
+    # -------------------------------------------------------------------------
+    # Settlement Methods
+    # -------------------------------------------------------------------------
+
+    def get_settlements(
+        self,
+        limit: int = 100,
+        cursor: Optional[str] = None,
+    ) -> dict:
+        """
+        Get settlement history for settled positions.
+
+        Args:
+            limit: Maximum number of settlements to return
+            cursor: Pagination cursor
+
+        Returns:
+            dict with:
+            - settlements: list of settlement objects with revenue, costs, fees
+            - cursor: pagination cursor
+        """
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+
+        return self._make_request("GET", "/portfolio/settlements", params=params)
