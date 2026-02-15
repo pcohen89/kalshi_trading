@@ -28,8 +28,7 @@ class TestKalshiClientUnit:
     def mock_config(self):
         """Mock the config module."""
         with patch('kalshi_client.get_api_credentials') as mock_creds, \
-             patch('kalshi_client.get_api_base_url') as mock_url, \
-             patch('kalshi_client.get_log_level') as mock_log:
+             patch('kalshi_client.get_api_base_url') as mock_url:
 
             # Generate a test RSA key
             from cryptography.hazmat.primitives.asymmetric import rsa
@@ -47,12 +46,10 @@ class TestKalshiClientUnit:
 
             mock_creds.return_value = ("test_api_key", pem)
             mock_url.return_value = "https://demo-api.kalshi.co/trade-api/v2"
-            mock_log.return_value = "WARNING"  # Suppress info logs in tests
 
             yield {
                 'mock_creds': mock_creds,
                 'mock_url': mock_url,
-                'mock_log': mock_log,
                 'private_key_pem': pem,
             }
 
@@ -421,7 +418,7 @@ class TestKalshiClientIntegration:
         market = markets["markets"][0]
         ticker = market["ticker"]
 
-        # Place a limit order at a very low price (unlikely to fill)
+        order_id = None
         try:
             order_result = client.place_order(
                 ticker=ticker,
@@ -439,13 +436,15 @@ class TestKalshiClientIntegration:
             assert order_status is not None
 
             # Cancel the order
-            cancel_result = client.cancel_order(order_id)
-            # Cancel should succeed (or return empty dict for 204)
-
-        except Exception as e:
-            # If order placement fails for any reason (e.g., market rules),
-            # that's okay - we're just testing the API integration
-            pytest.skip(f"Could not complete order lifecycle test: {e}")
+            client.cancel_order(order_id)
+            order_id = None  # Successfully cancelled, no cleanup needed
+        finally:
+            # Always attempt to cancel if order was placed but not yet cancelled
+            if order_id is not None:
+                try:
+                    client.cancel_order(order_id)
+                except Exception:
+                    pass  # Best-effort cleanup
 
 
 # =============================================================================

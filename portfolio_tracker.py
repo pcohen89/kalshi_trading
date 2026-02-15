@@ -121,105 +121,61 @@ class PortfolioTracker:
     # Internal Fetchers
     # -------------------------------------------------------------------------
 
-    def _fetch_all_positions(self) -> list:
+    def _paginate(self, fetch_method, result_keys: list, error_label: str) -> list:
         """
-        Fetch all positions with pagination.
+        Generic pagination helper for Kalshi list endpoints.
+
+        Args:
+            fetch_method: Client method to call (e.g. self.client.get_positions).
+                Must accept limit and cursor keyword arguments.
+            result_keys: List of possible keys to extract items from the response.
+                The first key that returns a truthy value is used.
+            error_label: Human-readable label for error messages (e.g. "positions").
 
         Returns:
-            List of all position dicts from the API.
+            List of all items across all pages.
 
         Raises:
             PortfolioError: If the API call fails.
         """
-        all_positions = []
+        all_items = []
         cursor = None
 
         try:
             for _ in range(self.MAX_PAGES):
-                result = self.client.get_positions(limit=100, cursor=cursor)
+                result = fetch_method(limit=100, cursor=cursor)
 
-                # Handle both possible API response key names
-                positions = result.get("market_positions") or result.get("positions") or []
-
-                if not positions:
+                # Try each possible key; fall back to empty list
+                items = None
+                for key in result_keys:
+                    items = result.get(key)
+                    if items:
+                        break
+                if not items:
                     break
 
-                all_positions.extend(positions)
+                all_items.extend(items)
 
                 cursor = result.get("cursor")
                 if not cursor:
                     break
 
-            return all_positions
+            return all_items
         except KalshiAPIError as e:
-            logger.error("Failed to fetch positions: %s", e)
-            raise PortfolioError(f"Failed to fetch positions: {e}")
+            logger.error("Failed to fetch %s: %s", error_label, e)
+            raise PortfolioError(f"Failed to fetch {error_label}: {e}")
+
+    def _fetch_all_positions(self) -> list:
+        """Fetch all positions with pagination."""
+        return self._paginate(self.client.get_positions, ["market_positions", "positions"], "positions")
 
     def _fetch_all_fills(self) -> list:
-        """
-        Fetch all fills with pagination.
-
-        Returns:
-            List of all fill dicts from the API.
-
-        Raises:
-            PortfolioError: If the API call fails.
-        """
-        all_fills = []
-        cursor = None
-
-        try:
-            for _ in range(self.MAX_PAGES):
-                result = self.client.get_fills(limit=100, cursor=cursor)
-
-                fills = result.get("fills") or []
-
-                if not fills:
-                    break
-
-                all_fills.extend(fills)
-
-                cursor = result.get("cursor")
-                if not cursor:
-                    break
-
-            return all_fills
-        except KalshiAPIError as e:
-            logger.error("Failed to fetch fills: %s", e)
-            raise PortfolioError(f"Failed to fetch fills: {e}")
+        """Fetch all fills with pagination."""
+        return self._paginate(self.client.get_fills, ["fills"], "fills")
 
     def _fetch_all_settlements(self) -> list:
-        """
-        Fetch all settlements with pagination.
-
-        Returns:
-            List of all settlement dicts from the API.
-
-        Raises:
-            PortfolioError: If the API call fails.
-        """
-        all_settlements = []
-        cursor = None
-
-        try:
-            for _ in range(self.MAX_PAGES):
-                result = self.client.get_settlements(limit=100, cursor=cursor)
-
-                settlements = result.get("settlements") or []
-
-                if not settlements:
-                    break
-
-                all_settlements.extend(settlements)
-
-                cursor = result.get("cursor")
-                if not cursor:
-                    break
-
-            return all_settlements
-        except KalshiAPIError as e:
-            logger.error("Failed to fetch settlements: %s", e)
-            raise PortfolioError(f"Failed to fetch settlements: {e}")
+        """Fetch all settlements with pagination."""
+        return self._paginate(self.client.get_settlements, ["settlements"], "settlements")
 
     def _get_market_price(self, ticker: str) -> dict:
         """

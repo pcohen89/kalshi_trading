@@ -22,7 +22,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 from cryptography.hazmat.backends import default_backend
 
-from config import get_api_credentials, get_api_base_url, get_log_level
+from config import get_api_credentials, get_api_base_url
 
 
 # Configure module logger
@@ -49,9 +49,13 @@ class KalshiClient:
     Client for interacting with the Kalshi Trading API.
 
     Usage:
+        # Load credentials from config/.env automatically
         client = KalshiClient()
+
+        # Or inject credentials directly
+        client = KalshiClient(api_key="key", api_secret="./key.pem", base_url="https://...")
+
         balance = client.get_balance()
-        positions = client.get_positions()
     """
 
     # Retry configuration
@@ -60,13 +64,27 @@ class KalshiClient:
     RETRY_BACKOFF_BASE = 1.0  # seconds
     RETRY_STATUS_CODES = {500, 502, 503, 504}  # Server errors worth retrying
 
-    def __init__(self):
-        """Initialize the Kalshi client with credentials from config."""
-        self._setup_logging()
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        api_secret: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
+        """
+        Initialize the Kalshi client.
 
-        # Load credentials
-        self.api_key, self.api_secret = get_api_credentials()
-        self.base_url = get_api_base_url()
+        Args:
+            api_key: API key. Loaded from config if not provided.
+            api_secret: API secret (PEM key path or string). Loaded from config if not provided.
+            base_url: API base URL. Loaded from config if not provided.
+        """
+        if api_key and api_secret:
+            self.api_key = api_key
+            self.api_secret = api_secret
+        else:
+            self.api_key, self.api_secret = get_api_credentials()
+
+        self.base_url = base_url or get_api_base_url()
 
         # Load private key for signing
         self._private_key = self._load_private_key(self.api_secret)
@@ -79,14 +97,6 @@ class KalshiClient:
         })
 
         logger.info("KalshiClient initialized for %s", self.base_url)
-
-    def _setup_logging(self):
-        """Configure logging for the client."""
-        log_level = get_log_level()
-        logging.basicConfig(
-            level=getattr(logging, log_level),
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
 
     def _load_private_key(self, key_data: str) -> PrivateKeyTypes:
         """
