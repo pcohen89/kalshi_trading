@@ -507,10 +507,15 @@ class TestCalculateTotalPnl:
 # =============================================================================
 
 class TestGetRealizedPnl:
-    """Tests for get_realized_pnl method."""
+    """Tests for get_realized_pnl method (settlement-only scenarios)."""
+
+    def _no_fills(self, mock_client):
+        """Helper to mock empty fills response."""
+        mock_client.get_fills.return_value = {"fills": [], "cursor": ""}
 
     def test_aggregates_realized_pnl(self, tracker, mock_client):
         """Sums realized P&L across settlements."""
+        self._no_fills(mock_client)
         mock_client.get_settlements.return_value = {
             "settlements": [
                 {"ticker": "A", "revenue": 500, "yes_total_cost": 275,
@@ -532,6 +537,7 @@ class TestGetRealizedPnl:
 
     def test_settlement_with_no_cost(self, tracker, mock_client):
         """Handles settlement with no cost (e.g. free position)."""
+        self._no_fills(mock_client)
         mock_client.get_settlements.return_value = {
             "settlements": [
                 {"ticker": "FREE", "revenue": 0, "yes_total_cost": 0,
@@ -548,6 +554,7 @@ class TestGetRealizedPnl:
 
     def test_settlement_with_both_yes_and_no_cost(self, tracker, mock_client):
         """Handles settlement where both yes and no costs exist."""
+        self._no_fills(mock_client)
         mock_client.get_settlements.return_value = {
             "settlements": [
                 {"ticker": "BOTH", "revenue": 300, "yes_total_cost": 100,
@@ -564,7 +571,8 @@ class TestGetRealizedPnl:
         assert result["net_pnl"] == 145
 
     def test_empty_settlements(self, tracker, mock_client):
-        """Handles no settlements."""
+        """Handles no settlements and no fills."""
+        self._no_fills(mock_client)
         mock_client.get_settlements.return_value = {
             "settlements": [],
             "cursor": "",
@@ -586,6 +594,21 @@ class TestGetRealizedPnl:
 
         assert "Failed to fetch settlements" in str(exc_info.value)
 
+    def test_settlement_entries_have_source_key(self, tracker, mock_client):
+        """Settlement entries include source='settlement'."""
+        self._no_fills(mock_client)
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "A", "revenue": 100, "yes_total_cost": 50,
+                 "no_total_cost": 0, "fee_cost": "0.0000", "market_result": "yes"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        assert result["settlements"][0]["source"] == "settlement"
+
 
 # =============================================================================
 # Display Portfolio Summary Tests
@@ -594,8 +617,13 @@ class TestGetRealizedPnl:
 class TestDisplayPortfolioSummary:
     """Tests for display_portfolio_summary method."""
 
+    def _no_fills(self, mock_client):
+        """Helper to mock empty fills response."""
+        mock_client.get_fills.return_value = {"fills": [], "cursor": ""}
+
     def test_displays_balance(self, tracker, mock_client, capsys):
         """Shows account balance in output."""
+        self._no_fills(mock_client)
         mock_client.get_balance.return_value = {
             "balance": 25000, "portfolio_value": 4500,
         }
@@ -616,6 +644,7 @@ class TestDisplayPortfolioSummary:
 
     def test_displays_no_open_positions(self, tracker, mock_client, capsys):
         """Shows 'No open positions' when portfolio is empty."""
+        self._no_fills(mock_client)
         mock_client.get_balance.return_value = {
             "balance": 10000, "portfolio_value": 0,
         }
@@ -633,6 +662,7 @@ class TestDisplayPortfolioSummary:
 
     def test_displays_position_details(self, tracker, mock_client, capsys):
         """Shows position ticker and P&L in output."""
+        self._no_fills(mock_client)
         mock_client.get_balance.return_value = {
             "balance": 25000, "portfolio_value": 4500,
         }
@@ -661,6 +691,7 @@ class TestDisplayPortfolioSummary:
 
     def test_displays_realized_pnl(self, tracker, mock_client, capsys):
         """Shows realized P&L section."""
+        self._no_fills(mock_client)
         mock_client.get_balance.return_value = {
             "balance": 25000, "portfolio_value": 0,
         }
@@ -682,6 +713,35 @@ class TestDisplayPortfolioSummary:
         assert "+$2.25" in output
         assert "$0.09" in output
         assert "+$2.16" in output
+
+    def test_displays_fill_disclaimer(self, tracker, mock_client, capsys):
+        """Shows NOTE disclaimer when fill-sourced P&L entries exist."""
+        mock_client.get_balance.return_value = {
+            "balance": 10000, "portfolio_value": 0,
+        }
+        mock_client.get_positions.return_value = {
+            "market_positions": [], "cursor": "",
+        }
+        mock_client.get_settlements.return_value = {
+            "settlements": [], "cursor": "",
+        }
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "TRADED", "side": "yes", "action": "buy",
+                 "count": 5, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "TRADED", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        tracker.display_portfolio_summary()
+
+        output = capsys.readouterr().out
+        assert "NOTE:" in output
+        assert "estimated from fill data" in output
 
 
 # =============================================================================
@@ -764,3 +824,269 @@ class TestFetchAllSettlements:
             tracker._fetch_all_settlements()
 
         assert "Failed to fetch settlements" in str(exc_info.value)
+
+
+# =============================================================================
+# Fill-Based Realized P&L Tests
+# =============================================================================
+
+class TestFillBasedRealizedPnl:
+    """Tests for fill-based realized P&L calculation."""
+
+    def _no_settlements(self, mock_client):
+        """Helper to mock empty settlements response."""
+        mock_client.get_settlements.return_value = {"settlements": [], "cursor": ""}
+
+    def test_simple_yes_round_trip(self, tracker, mock_client):
+        """Buy 5 YES at 40c, sell 5 YES at 60c = +100c profit."""
+        self._no_settlements(mock_client)
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "TICKER-A", "side": "yes", "action": "buy",
+                 "count": 5, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "TICKER-A", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        assert result["gross_pnl"] == 100
+        assert result["net_pnl"] == 100
+        assert len(result["settlements"]) == 1
+        assert result["settlements"][0]["source"] == "fills"
+        assert result["settlements"][0]["realized_pnl"] == 100
+
+    def test_simple_no_round_trip(self, tracker, mock_client):
+        """Buy 3 NO (no_price=30), sell 3 NO (no_price=60) = +90c profit."""
+        self._no_settlements(mock_client)
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "TICKER-B", "side": "no", "action": "buy",
+                 "count": 3, "yes_price": 70, "no_price": 30,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "TICKER-B", "side": "no", "action": "sell",
+                 "count": 3, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        # (60 - 30) * 3 = 90
+        assert result["gross_pnl"] == 90
+
+    def test_partial_sell(self, tracker, mock_client):
+        """Buy 10, sell 5 = only 5 contracts realized."""
+        self._no_settlements(mock_client)
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "PART", "side": "yes", "action": "buy",
+                 "count": 10, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "PART", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        # Only 5 matched: (60 - 40) * 5 = 100
+        assert result["gross_pnl"] == 100
+        assert result["settlements"][0]["sell_count"] == 5
+
+    def test_fill_based_loss(self, tracker, mock_client):
+        """Buy at 60c, sell at 40c = loss."""
+        self._no_settlements(mock_client)
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "LOSS", "side": "yes", "action": "buy",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "LOSS", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        # (40 - 60) * 5 = -100
+        assert result["gross_pnl"] == -100
+
+    def test_fifo_matching(self, tracker, mock_client):
+        """FIFO: buy 3@30c, buy 3@50c, sell 4@60c = 90+10 = 100."""
+        self._no_settlements(mock_client)
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "FIFO", "side": "yes", "action": "buy",
+                 "count": 3, "yes_price": 30, "no_price": 70,
+                 "fee_cost": "0.0000", "created_time": "2025-01-10T10:00:00Z"},
+                {"ticker": "FIFO", "side": "yes", "action": "buy",
+                 "count": 3, "yes_price": 50, "no_price": 50,
+                 "fee_cost": "0.0000", "created_time": "2025-01-11T10:00:00Z"},
+                {"ticker": "FIFO", "side": "yes", "action": "sell",
+                 "count": 4, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-12T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        # FIFO: first 3 matched at 30c -> (60-30)*3=90
+        #        next 1 matched at 50c -> (60-50)*1=10
+        # total = 100
+        assert result["gross_pnl"] == 100
+
+    def test_sell_fees_included(self, tracker, mock_client):
+        """Sell fees are deducted from net P&L."""
+        self._no_settlements(mock_client)
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "FEES", "side": "yes", "action": "buy",
+                 "count": 5, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "FEES", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.2500", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        assert result["gross_pnl"] == 100
+        assert result["total_fees"] == 25
+        assert result["net_pnl"] == 75
+
+    def test_combined_fills_and_settlements_no_overlap(self, tracker, mock_client):
+        """Fills for one ticker + settlement for another = both counted."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "SETTLED", "revenue": 500, "yes_total_cost": 300,
+                 "no_total_cost": 0, "fee_cost": "0.1000", "market_result": "yes"},
+            ],
+            "cursor": "",
+        }
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "TRADED", "side": "yes", "action": "buy",
+                 "count": 5, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "TRADED", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        # Settlement: 500 - 300 = 200, fees = 10
+        # Fills: (60-40)*5 = 100, fees = 0
+        assert result["gross_pnl"] == 300
+        assert result["total_fees"] == 10
+        assert result["net_pnl"] == 290
+        assert len(result["settlements"]) == 2
+        sources = {e["source"] for e in result["settlements"]}
+        assert sources == {"settlement", "fills"}
+
+    def test_overlapping_ticker_settlement_takes_precedence(self, tracker, mock_client):
+        """When ticker has both settlement and fills, only settlement counted."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "OVERLAP", "revenue": 500, "yes_total_cost": 300,
+                 "no_total_cost": 0, "fee_cost": "0.1000", "market_result": "yes"},
+            ],
+            "cursor": "",
+        }
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "OVERLAP", "side": "yes", "action": "buy",
+                 "count": 10, "yes_price": 30, "no_price": 70,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "OVERLAP", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        # Only settlement P&L counted: 500 - 300 = 200
+        assert result["gross_pnl"] == 200
+        assert len(result["settlements"]) == 1
+        assert result["settlements"][0]["source"] == "settlement"
+
+    def test_no_sell_fills_only_settlements(self, tracker, mock_client):
+        """Buy fills only (no sells) = no fill-based P&L, only settlements."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "HELD", "revenue": 100, "yes_total_cost": 50,
+                 "no_total_cost": 0, "fee_cost": "0.0000", "market_result": "yes"},
+            ],
+            "cursor": "",
+        }
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "OPEN", "side": "yes", "action": "buy",
+                 "count": 5, "yes_price": 40, "no_price": 60,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        result = tracker.get_realized_pnl()
+
+        assert result["gross_pnl"] == 50
+        assert len(result["settlements"]) == 1
+        assert result["settlements"][0]["source"] == "settlement"
+
+    def test_empty_fills_and_settlements(self, tracker, mock_client):
+        """No fills and no settlements = all zeros."""
+        mock_client.get_settlements.return_value = {"settlements": [], "cursor": ""}
+        mock_client.get_fills.return_value = {"fills": [], "cursor": ""}
+
+        result = tracker.get_realized_pnl()
+
+        assert result["gross_pnl"] == 0
+        assert result["total_fees"] == 0
+        assert result["net_pnl"] == 0
+        assert result["settlements"] == []
+
+    def test_warning_for_ambiguous_tickers(self, tracker, mock_client, capsys):
+        """Prints WARNING when ticker has both settlement and sell fills."""
+        mock_client.get_settlements.return_value = {
+            "settlements": [
+                {"ticker": "MIXED", "revenue": 500, "yes_total_cost": 300,
+                 "no_total_cost": 0, "fee_cost": "0.0000", "market_result": "yes"},
+            ],
+            "cursor": "",
+        }
+        mock_client.get_fills.return_value = {
+            "fills": [
+                {"ticker": "MIXED", "side": "yes", "action": "buy",
+                 "count": 10, "yes_price": 30, "no_price": 70,
+                 "fee_cost": "0.0000", "created_time": "2025-01-15T10:00:00Z"},
+                {"ticker": "MIXED", "side": "yes", "action": "sell",
+                 "count": 5, "yes_price": 60, "no_price": 40,
+                 "fee_cost": "0.0000", "created_time": "2025-01-16T10:00:00Z"},
+            ],
+            "cursor": "",
+        }
+
+        tracker.get_realized_pnl()
+
+        output = capsys.readouterr().out
+        assert "WARNING" in output
+        assert "MIXED" in output
+        assert "may be incomplete" in output

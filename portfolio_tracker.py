@@ -251,6 +251,105 @@ class PortfolioTracker:
             logger.error("Failed to get market price for %s: %s", ticker, e)
             raise PortfolioError(f"Failed to get market price for {ticker}: {e}")
 
+    def _compute_fill_based_realized_pnl(self) -> dict:
+        """
+        Compute realized P&L from fill data using FIFO matching.
+
+        Fetches all fills and groups them by (ticker, side). For each group
+        that has sell fills, matches buys to sells in FIFO order and computes
+        the P&L per matched unit.
+
+        Returns:
+            dict with:
+                fill_pnl_by_ticker: dict mapping ticker -> {ticker, side,
+                    realized_pnl, fees_paid, net_pnl, sell_count}
+                total_gross_pnl: int (sum of realized_pnl across all tickers)
+                total_fees: int (sum of fees across all tickers)
+
+        Raises:
+            PortfolioError: If fetching fills fails.
+        """
+        all_fills = self._fetch_all_fills()
+
+        # Group fills by (ticker, side)
+        groups = {}
+        for fill in all_fills:
+            key = (fill.get("ticker", "UNKNOWN"), fill.get("side", "yes"))
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(fill)
+
+        fill_pnl_by_ticker = {}
+        total_gross_pnl = 0
+        total_fees = 0
+
+        for (ticker, side), fills in groups.items():
+            buy_fills = [f for f in fills if f.get("action") == "buy"]
+            sell_fills = [f for f in fills if f.get("action") == "sell"]
+
+            if not sell_fills:
+                continue
+
+            # Sort by created_time (oldest first) for FIFO matching
+            buy_fills.sort(key=lambda f: f.get("created_time", ""))
+            sell_fills.sort(key=lambda f: f.get("created_time", ""))
+
+            price_field = "yes_price" if side == "yes" else "no_price"
+
+            # FIFO matching
+            realized_pnl = 0
+            total_sell_count = 0
+            buy_idx = 0
+            buy_remaining = 0
+
+            for sell in sell_fills:
+                sell_count = sell.get("count", 0)
+                sell_price = sell.get(price_field, 0)
+                total_sell_count += sell_count
+
+                remaining = sell_count
+                while remaining > 0 and buy_idx < len(buy_fills):
+                    if buy_remaining == 0:
+                        buy_remaining = buy_fills[buy_idx].get("count", 0)
+
+                    match_qty = min(remaining, buy_remaining)
+                    buy_price = buy_fills[buy_idx].get(price_field, 0)
+
+                    realized_pnl += match_qty * (sell_price - buy_price)
+
+                    remaining -= match_qty
+                    buy_remaining -= match_qty
+
+                    if buy_remaining == 0:
+                        buy_idx += 1
+
+            # Sum fees from sell fills
+            fees = 0
+            for sell in sell_fills:
+                fee_str = sell.get("fee_cost", "0")
+                try:
+                    fees += int(round(float(fee_str) * 100))
+                except (ValueError, TypeError):
+                    pass
+
+            fill_pnl_by_ticker[ticker] = {
+                "ticker": ticker,
+                "side": side,
+                "realized_pnl": realized_pnl,
+                "fees_paid": fees,
+                "net_pnl": realized_pnl - fees,
+                "sell_count": total_sell_count,
+            }
+
+            total_gross_pnl += realized_pnl
+            total_fees += fees
+
+        return {
+            "fill_pnl_by_ticker": fill_pnl_by_ticker,
+            "total_gross_pnl": total_gross_pnl,
+            "total_fees": total_fees,
+        }
+
     # -------------------------------------------------------------------------
     # Public Methods
     # -------------------------------------------------------------------------
@@ -390,17 +489,18 @@ class PortfolioTracker:
 
     def get_realized_pnl(self) -> dict:
         """
-        Get realized P&L from settled positions.
+        Get realized P&L from settled positions and fill-based sales.
 
-        Uses the /portfolio/settlements endpoint which contains revenue,
-        cost, and fee data for all settled markets.
+        Uses the /portfolio/settlements endpoint for settled markets and
+        fill data (FIFO matching) for positions sold before settlement.
 
         Returns:
             dict with: gross_pnl (total profit/loss before fees), total_fees,
-            net_pnl (gross - fees), settlements (list of per-settlement dicts).
+            net_pnl (gross - fees), settlements (list of per-entry dicts
+            with a "source" key indicating "settlement" or "fills").
 
         Raises:
-            PortfolioError: If fetching settlements fails.
+            PortfolioError: If fetching settlements or fills fails.
         """
         all_settlements = self._fetch_all_settlements()
 
@@ -431,9 +531,49 @@ class PortfolioTracker:
                 "realized_pnl": pnl,
                 "fees_paid": fees,
                 "net_pnl": pnl - fees,
+                "source": "settlement",
             })
             gross_pnl += pnl
             total_fees += fees
+
+        # Compute fill-based realized P&L for positions sold before settlement
+        fill_results = self._compute_fill_based_realized_pnl()
+
+        settled_tickers = {d["ticker"] for d in settlement_details}
+        fill_tickers = set(fill_results["fill_pnl_by_ticker"].keys())
+
+        # Warn about tickers with both sell fills and settlements
+        ambiguous_tickers = settled_tickers & fill_tickers
+        if ambiguous_tickers:
+            sorted_ambiguous = sorted(ambiguous_tickers)
+            logger.warning(
+                "Ticker(s) %s have positions sold before market settlement. "
+                "Realized P&L for these markets may be incomplete.",
+                sorted_ambiguous,
+            )
+            print(
+                f"  WARNING: Ticker(s) {sorted_ambiguous} have positions sold "
+                f"before market settlement.\n"
+                f"  Realized P&L for these markets may be incomplete — the "
+                f"settlement data may not\n"
+                f"  fully account for contracts sold early. Verify these "
+                f"tickers manually."
+            )
+
+        # Add fill-based entries for tickers NOT in settlements
+        for ticker, fill_data in fill_results["fill_pnl_by_ticker"].items():
+            if ticker not in settled_tickers:
+                settlement_details.append({
+                    "ticker": fill_data["ticker"],
+                    "side": fill_data["side"],
+                    "realized_pnl": fill_data["realized_pnl"],
+                    "fees_paid": fill_data["fees_paid"],
+                    "net_pnl": fill_data["net_pnl"],
+                    "sell_count": fill_data["sell_count"],
+                    "source": "fills",
+                })
+                gross_pnl += fill_data["realized_pnl"]
+                total_fees += fill_data["fees_paid"]
 
         return {
             "gross_pnl": gross_pnl,
@@ -510,6 +650,26 @@ class PortfolioTracker:
             print(f"  Gross P&L:          {_format_pnl(realized['gross_pnl'])}")
             print(f"  Fees Paid:          {_format_dollars(realized['total_fees'])}")
             print(f"  Net Realized P&L:   {_format_pnl(realized['net_pnl'])}")
+
+            # Disclaimer when fill-sourced entries exist
+            has_fill_entries = any(
+                entry.get("source") == "fills"
+                for entry in realized.get("settlements", [])
+            )
+            if has_fill_entries:
+                print()
+                print(
+                    "  NOTE: Realized P&L from positions sold before market "
+                    "settlement is"
+                )
+                print(
+                    "  estimated from fill data. For markets where you sold "
+                    "some contracts"
+                )
+                print(
+                    "  and the remainder settled, the P&L may not fully "
+                    "reflect early sales."
+                )
         except PortfolioError as e:
             logger.warning("Could not fetch realized P&L: %s", e)
             print("  (Could not load realized P&L)")
