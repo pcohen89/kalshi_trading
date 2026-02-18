@@ -213,13 +213,13 @@ python3 cli_interface.py
 
 ---
 
-#### Task 3: Portfolio & Position Tracking ⏳
-**Status**: Mostly complete — needs sold position tracking before closing out
+#### Task 3: Portfolio & Position Tracking ✅
+**Status**: Complete
 **Date**: February 2026
 
 **What was implemented**:
-- `portfolio_tracker.py` - Full portfolio tracker (280 lines)
-- `tests/test_portfolio.py` - Comprehensive test suite (48 tests)
+- `portfolio_tracker.py` - Full portfolio tracker (635 lines)
+- `tests/test_portfolio.py` - Comprehensive test suite (61 tests)
 - Added `get_settlements()` to `kalshi_client.py` for realized P&L
 
 **PortfolioTracker class features**:
@@ -228,6 +228,9 @@ python3 cli_interface.py
 - Settled market handling (100c for winners, 0c for losers)
 - Graceful degradation — skips positions that fail price lookup
 - Formatted portfolio summary display matching CLI conventions
+- Fill-based realized P&L with FIFO matching for positions sold before settlement
+- Combined realized P&L from both settlements and fill data, with deduplication
+- Warning when a ticker has both settlement and sell-fill data (ambiguous P&L)
 
 **Available methods**:
 ```python
@@ -241,7 +244,7 @@ tracker.calculate_position_pnl(pos)    # Unrealized P&L for one position
 tracker.calculate_total_pnl()          # Aggregate unrealized P&L
 
 # Realized P&L
-tracker.get_realized_pnl()             # From /portfolio/settlements endpoint
+tracker.get_realized_pnl()             # From settlements + fill-based FIFO matching
 
 # Display
 tracker.display_portfolio_summary()    # Formatted summary to stdout
@@ -251,16 +254,11 @@ tracker.display_portfolio_summary()    # Formatted summary to stdout
 - `/portfolio/positions` does NOT include settled/finalized markets
 - Must use `/portfolio/settlements` for realized P&L (revenue, cost, fees)
 - `fee_cost` in settlements is a dollar string (e.g. "0.0900"), not cents
+- Sold positions (closed via sell orders) generate fills but may not appear in settlements until market settles — fill-based FIFO matching covers this gap
 
 **Test results**:
-- 48 unit tests (mocked) - all pass
+- 61 unit tests (mocked) - all pass
 - Run tests: `pytest tests/test_portfolio.py -v`
-
-**Remaining before closing out Task 3**:
-- Realized P&L currently only captures settlements (markets that expired/resolved)
-- Need to also capture P&L from positions that were manually sold (closed via sell orders)
-- Sold positions generate fills but may not appear in settlements until the market itself settles
-- Should incorporate fill-based P&L for sold positions alongside settlement-based P&L
 
 ---
 
