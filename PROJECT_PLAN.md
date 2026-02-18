@@ -262,17 +262,54 @@ tracker.display_portfolio_summary()    # Formatted summary to stdout
 
 ---
 
-### Next Task: Task 4 - Trade Logging & History
+#### Task 4: Trade Logging & History ✅
+**Status**: Complete
+**Date**: February 2026
 
-**Start here**: Implement `trade_logger.py`.
+**What was implemented**:
+- `trade_logger.py` - Full trade event logging system (370 lines)
+- `tests/test_trade_logger.py` - Comprehensive test suite (34 tests)
 
-**Prerequisites are ready**:
-- ✅ `KalshiClient` provides `get_fills()`, `get_orders()`
-- ✅ `PortfolioTracker` provides position and P&L data
-- ✅ Authentication and error handling working
+**TradeLogger class features**:
+- Hybrid logging: Python `logging` module with `TimedRotatingFileHandler` for human-readable `.log` files + JSON-lines (`.jsonl`) for structured querying
+- Daily log rotation with 30-day retention (trades) and 90-day retention (errors)
+- Four event types: submission, fill, cancellation, error
+- Date-range filtering with timezone-aware datetime validation
+- CSV export with configurable date filters
+- Formatted recent-trades display for CLI
 
-**Files to implement**:
-- `trade_logger.py` - Trade logging and history
+**Available methods**:
+```python
+from trade_logger import TradeLogger
+
+logger = TradeLogger()
+
+# Log events
+logger.log_order_submission(order_details)    # From API response dict
+logger.log_order_fill(fill_details)           # Fill data
+logger.log_order_cancellation(order_id)       # Cancellation
+logger.log_error(message, context=None)       # Error with optional context
+
+# Query & export
+logger.get_trade_history(start_date, end_date)  # Filter by date range
+logger.export_trades_to_csv(filename, start_date, end_date)  # CSV export
+logger.display_recent_trades(count=20)          # Print to stdout
+```
+
+**Log files**:
+- `logs/trades.log` — human-readable audit trail (rotated daily)
+- `logs/errors.log` — error events (rotated daily)
+- `logs/trades.jsonl` — structured JSON-lines store for querying/export
+
+**Test results**:
+- 34 unit tests - all pass
+- Run tests: `pytest tests/test_trade_logger.py -v`
+
+---
+
+### Next Task: Task 6 - Main Application Entry Point
+
+**Start here**: Implement `main.py` to tie all modules together.
 
 ---
 
