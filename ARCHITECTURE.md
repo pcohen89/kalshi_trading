@@ -5,18 +5,23 @@ Agent-readable codebase map. For conventions and workflow rules, see `CLAUDE.md`
 ## Module Dependency Graph
 
 ```
-cli_interface.py ──> trade_executor.py ──> kalshi_client.py ──> config.py
-                                               ^                   ^
-portfolio_tracker.py ──────────────────────────┘                   │
-trade_logger.py (standalone, imports config for log level) ────────┘
+main.py ──> cli_interface.py ──> trade_executor.py ──> kalshi_client.py ──> config.py
+      │                                                      ^                   ^
+      ├──> portfolio_tracker.py ───────────────────────────┘                   │
+      ├──> trade_logger.py (standalone, imports config for log level) ─────────┘
+      └──> kalshi_client.py (shared instance passed to executor + tracker)
 ```
 
 ## Data Flow
 
 ```
-User input ─> TradingCLI (cli_interface.py)
-                ├── search/trade ─> TradeExecutor ─> KalshiClient ─> Kalshi REST API
-                └── (future) portfolio view ─> PortfolioTracker ─> KalshiClient ─> Kalshi REST API
+User input ─> MainApp (main.py)
+                ├── portfolio view ─> PortfolioTracker ─> KalshiClient ─> Kalshi REST API
+                ├── place a trade  ─> TradingCLI sub-loop
+                │                        ├── search/trade ─> TradeExecutor ─> KalshiClient ─> Kalshi REST API
+                ├── open orders    ─> TradeExecutor ─> KalshiClient ─> Kalshi REST API
+                ├── cancel order   ─> TradeExecutor ─> KalshiClient ─> Kalshi REST API
+                └── trade history  ─> TradeLogger ─> logs/trades.jsonl
 
 Trade events ─> TradeLogger ─> logs/trades.log + logs/trades.jsonl + logs/errors.log
 ```
@@ -25,12 +30,13 @@ Trade events ─> TradeLogger ─> logs/trades.log + logs/trades.jsonl + logs/er
 
 | File | Lines | Purpose |
 |------|-------|---------|
+| `main.py` | 130 | Top-level entry point; initialises shared dependencies, routes menu to all modules |
 | `config.py` | 127 | Loads `.env`, validates credentials, exposes environment-aware config |
 | `kalshi_client.py` | 604 | Authenticated HTTP client for Kalshi API v2 with RSA signing, retries, rate-limit handling |
 | `trade_executor.py` | 339 | High-level trade operations with input validation; wraps KalshiClient |
 | `portfolio_tracker.py` | 634 | Position listing, unrealized P&L (mark-to-market), realized P&L (settlements + FIFO fill matching) |
 | `trade_logger.py` | 373 | Event logging to rotating `.log` files + `.jsonl` structured store; CSV export |
-| `cli_interface.py` | 447 | Interactive menu-driven CLI for trading operations |
+| `cli_interface.py` | 447 | Interactive menu-driven CLI for trading operations (launched as sub-loop from main.py) |
 
 ## Exceptions
 
@@ -175,12 +181,29 @@ All tests use `unittest.mock.Mock()` for the KalshiClient — no live API calls 
 | `tests/test_portfolio.py` | 61 | PortfolioTracker |
 | `tests/test_trade_logger.py` | 34 | TradeLogger |
 | `tests/test_config.py` | 21 | Config loading/validation |
+| `tests/test_main.py` | 45 | MainApp (init, menu routing, all action handlers, shutdown) |
 
 Run all: `python3 -m pytest tests/ -v`
 Run one module: `python3 -m pytest tests/test_portfolio.py -v`
 Integration only: `pytest tests/test_api_client.py -m integration`
 
+### main.py
+
+**Class: `MainApp`** — top-level application controller. Constructor: `MainApp(client=None, executor=None, tracker=None, logger=None)`. Uses dependency injection; creates `KalshiClient` once and shares it with `TradeExecutor` and `PortfolioTracker`.
+
+| Method | Signature | Behaviour |
+|--------|-----------|-----------|
+| `run` | `() -> None` | Validates config, prints banner, enters menu loop; catches `KeyboardInterrupt` |
+| `_view_portfolio` | `() -> None` | Calls `tracker.display_portfolio_summary()`; catches `PortfolioError` + `Exception` |
+| `_launch_trading` | `() -> None` | Creates `TradingCLI()` and calls `cli.run()` (full trading sub-menu) |
+| `_view_open_orders` | `() -> None` | Calls `executor.list_open_orders()`; formats with `format_order_summary`; catches `TradeExecutionError` |
+| `_cancel_order` | `() -> None` | Prompts for order ID, confirms, calls `executor.cancel_order()`; catches `TradeExecutionError` |
+| `_view_trade_history` | `() -> None` | Calls `logger.display_recent_trades()`; catches `Exception` |
+
+Module-level entry point: `main()` or `python3 main.py`.
+
+---
+
 ## Not Yet Implemented
 
-- `main.py` — Task 6: unified entry point tying all modules together (next task)
 - Task 7: comprehensive integration testing

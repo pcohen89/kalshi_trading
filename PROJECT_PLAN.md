@@ -307,9 +307,47 @@ logger.display_recent_trades(count=20)          # Print to stdout
 
 ---
 
-### Next Task: Task 6 - Main Application Entry Point
+#### Task 6: Main Application Entry Point ✅
+**Status**: Complete
+**Date**: February 2026
 
-**Start here**: Implement `main.py` to tie all modules together.
+**What was implemented**:
+- `main.py` - Top-level entry point (130 lines)
+- `tests/test_main.py` - Comprehensive test suite (45 tests)
+
+**MainApp class features**:
+- Dependency injection: accepts optional `client`, `executor`, `tracker`, `logger` — creates defaults internally
+- Shared `KalshiClient` instance passed to both `TradeExecutor` and `PortfolioTracker` to avoid double auth
+- Config validated at startup via `validate_config()` — clear error message and clean exit on failure
+- 6-item menu routing to all modules
+- Per-action exception handling — errors never crash the main loop
+- Clean shutdown on `KeyboardInterrupt` from anywhere in the loop
+
+**Menu options**:
+```
+1. View portfolio summary   → PortfolioTracker.display_portfolio_summary()
+2. Place a trade            → TradingCLI sub-loop (full trading interface)
+3. View open orders         → TradeExecutor.list_open_orders()
+4. Cancel an order          → TradeExecutor.cancel_order()
+5. View recent trade history → TradeLogger.display_recent_trades()
+6. Exit
+```
+
+**To run**:
+```bash
+cd kalshi_trading
+python3 main.py
+```
+
+**Test results**:
+- 45 unit tests (mocked) - all pass
+- Run tests: `pytest tests/test_main.py -v`
+
+---
+
+### Next Task: Task 7 - Basic Testing
+
+**Start here**: Comprehensive integration testing across all modules.
 
 ---
 
