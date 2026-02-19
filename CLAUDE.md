@@ -1,5 +1,8 @@
 # Project Guidelines
 
+Read `ARCHITECTURE.md` for the full module map — classes, method signatures, dependencies, and data flow.
+Only read code files when info needed is not contained in `ARCHITECTURE,md`.
+
 ## Commands
 - Build: `python3 -m build`
 - Test all: `python3 -m pytest kalshi_trading/tests/`
