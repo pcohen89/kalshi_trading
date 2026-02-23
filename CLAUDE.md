@@ -1,7 +1,8 @@
 # Project Guidelines
 
 Read `ARCHITECTURE.md` for the full module map — classes, method signatures, dependencies, and data flow.
-Only read code files when info needed is not contained in `ARCHITECTURE,md`.
+Read `TESTS.md` for the full test suite map — all 266 tests, fixtures, patterns, and coverage gaps.
+Only read code files when info needed is not contained in `ARCHITECTURE.md` or `TESTS.md`.
 
 ## Commands
 - Build: `python3 -m build`
