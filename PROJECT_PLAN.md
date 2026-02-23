@@ -345,9 +345,40 @@ python3 main.py
 
 ---
 
-### Next Task: Task 7 - Basic Testing
+#### Task 7: Comprehensive Integration Testing ✅
+**Status**: Complete
+**Date**: February 2026
 
-**Start here**: Comprehensive integration testing across all modules.
+**What was implemented**:
+- `tests/test_cli_interface.py` — 25 tests covering all `TradingCLI` menu actions (previously had zero tests)
+- `tests/test_integration.py` — 15 tests verifying cross-module wiring through real `TradeExecutor`, `PortfolioTracker`, and `TradeLogger` instances sharing a single mock client
+- `TESTS.md` — full test suite map (266 tests) for agent sessions, parallel to `ARCHITECTURE.md`
+- `CLAUDE.md` updated to reference `TESTS.md`
+
+**test_cli_interface.py coverage**:
+- Lazy `TradeExecutor` init via `_ensure_executor()` (creates on first call, reuses on subsequent)
+- All 6 menu actions: search markets, place market order, place limit order, view open orders, cancel order, check order status
+- Confirmation prompt rejection (API never called), invalid side input, price bounds enforcement, API error handling for every action
+- Menu loop: invalid choice message, exit on "7", `KeyboardInterrupt` caught by `run_trading_cli()`
+
+**test_integration.py coverage**:
+- Dependency injection: shared client reaches both `executor` and `tracker`; `TradingCLI` creates its own separate executor by design
+- Error recovery: `PortfolioError`, `TradeExecutionError`, and `ConfigurationError` all caught without crashing the menu loop
+- `TradeLogger` round-trip: logged event appears in `display_recent_trades()` output; empty log shows correct message
+- Menu routing verified on real `MainApp` instances (not fully mocked)
+
+**Known gap identified (see Task 8)**:
+- `main.py` never calls `TradeLogger` when orders are placed or cancelled — trade history only reflects events logged explicitly. Tests written to document this behaviour, fix deferred to Task 8.
+
+**Test results**:
+- 266 total tests — all pass
+- Run: `python3 -m pytest tests/ -m "not integration" -v`
+
+---
+
+### Next Task: Task 8 - Wire TradeLogger into Order Actions
+
+**Start here**: `main.py` calls `TradingCLI.run()` for all trading operations but never logs the resulting orders or cancellations to `TradeLogger`. The trade history view therefore shows nothing unless events are logged elsewhere. Fix described in Task 8 below.
 
 ---
 
@@ -618,9 +649,9 @@ python3 main.py
 
 ---
 
-### Task 7: Basic Testing
+### Task 7: Comprehensive Integration Testing
 
-**Objective**: Test core functionality to ensure reliability.
+**Objective**: Close the two largest coverage gaps — `TradingCLI` had zero tests and no tests verified cross-module wiring.
 
 **Inputs**:
 - Implemented modules
@@ -656,6 +687,39 @@ python3 main.py
 - Manual test checklist can be completed successfully
 - No critical bugs in core functionality
 - Error handling works as expected
+
+---
+
+### Task 8: Wire TradeLogger into Order Actions
+
+**Objective**: Fix the design gap where orders placed or cancelled through `TradingCLI` are never recorded in `TradeLogger`, making the trade history view always empty for real trades.
+
+**Root cause**: `main.py._launch_trading()` creates a bare `TradingCLI()` with no logger reference. `TradingCLI` places and cancels orders via `TradeExecutor` but has no mechanism to log those events.
+
+**Inputs**:
+- `main.py` — needs to pass a `TradeLogger` into the trading sub-loop
+- `cli_interface.py` — needs to accept and use a `TradeLogger`
+- `tests/test_cli_interface.py` — needs tests for logging behaviour
+- `tests/test_integration.py` — integration test for the full path
+
+**Outputs**:
+- `TradingCLI.__init__` accepts optional `logger: TradeLogger = None`
+- `_place_market_order` and `_place_limit_order` call `logger.log_order_submission()` on success
+- `_cancel_order` calls `logger.log_order_cancellation()` on success
+- `main.py._launch_trading()` passes `self.logger` when constructing `TradingCLI`
+- New tests verify that successful orders/cancellations produce log entries
+- Existing tests unaffected (logger defaults to `None`, logging is skipped gracefully)
+
+**Technical requirements**:
+- Logger is optional — `TradingCLI` must work without one (backwards-compatible)
+- Log only on confirmed success (after API call returns without error)
+- Do not let logging errors propagate or crash the trading loop
+
+**Success criteria**:
+- After placing an order via menu option 2 or 3, `View recent trade history` shows the event
+- After cancelling an order via menu option 4, the cancellation appears in history
+- All 266 existing tests still pass
+- New tests cover the logging path for both success and logger-is-None cases
 
 ---
 
@@ -822,24 +886,32 @@ When working on individual tasks from this document:
 ### Code Organization
 ```
 kalshi_trading/
-├── .env                    # Environment variables (not in git)
-├── .env.example           # Template for .env
-├── requirements.txt       # Python dependencies
-├── README.md              # Setup and usage instructions
-├── config.py              # Configuration management
-├── kalshi_client.py       # API integration (Task 1)
-├── trade_executor.py      # Order execution (Task 2)
-├── portfolio_tracker.py   # Position tracking (Task 3)
-├── trade_logger.py        # Logging (Task 4)
-├── cli_interface.py       # CLI interface (Task 2)
-├── main.py                # Main entry point (Task 6)
-├── logs/                  # Log files directory
+├── .env                      # Environment variables (not in git)
+├── .env.example              # Template for .env
+├── requirements.txt          # Python dependencies
+├── README.md                 # Setup and usage instructions
+├── ARCHITECTURE.md           # Module map — classes, signatures, data flow
+├── TESTS.md                  # Test suite map — all 266 tests, fixtures, patterns
+├── config.py                 # Configuration management (Task 5)
+├── kalshi_client.py          # API integration (Task 1)
+├── trade_executor.py         # Order execution (Task 2)
+├── portfolio_tracker.py      # Position tracking (Task 3)
+├── trade_logger.py           # Logging (Task 4)
+├── cli_interface.py          # CLI interface (Task 2)
+├── main.py                   # Main entry point (Task 6)
+├── logs/                     # Log files directory
 │   ├── trades.log
+│   ├── trades.jsonl
 │   └── errors.log
-└── tests/                 # Test files (Task 7)
-    ├── test_api_client.py
-    ├── test_portfolio.py
-    └── test_config.py
+└── tests/                    # Test files (Task 7)
+    ├── test_api_client.py    # KalshiClient — 25 tests (7 live, marked integration)
+    ├── test_trade_executor.py # TradeExecutor — 40 tests
+    ├── test_portfolio.py      # PortfolioTracker — 61 tests
+    ├── test_trade_logger.py   # TradeLogger — 34 tests
+    ├── test_config.py         # config.py — 21 tests
+    ├── test_main.py           # MainApp — 45 tests
+    ├── test_cli_interface.py  # TradingCLI — 25 tests (Task 7)
+    └── test_integration.py   # Cross-module wiring — 15 tests (Task 7)
 ```
 
 This structure keeps the codebase simple and organized for V1.
