@@ -6,10 +6,10 @@ Only read code files when info needed is not contained in `ARCHITECTURE.md` or `
 
 ## Commands
 - Build: `python3 -m build`
-- Test all: `python3 -m pytest kalshi_trading/tests/`
-- Test single: `python3 -m pytest kalshi_trading/tests/test_<module>.py -v`
-- Lint: `python3 -m flake8 kalshi_trading/`
-- Type check: `python3 -m mypy kalshi_trading/`
+- Test all: `python3 -m pytest tests/`
+- Test single: `python3 -m pytest tests/test_<module>.py -v`
+- Lint: `python3 -m flake8 .`
+- Type check: `python3 -m mypy .`
 
 ## Code Style
 - Python 3.9+ — use type hints on all public function signatures
