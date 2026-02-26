@@ -1,11 +1,11 @@
 # Test Suite — Kalshi Trading System
 
-Agent-readable test map. Covers all 266 tests across 8 files. Before adding new tests, read here to understand what is already covered and which patterns to follow. Only open a test file when you need line-level detail not contained here.
+Agent-readable test map. Covers all 275 tests across 8 files. Before adding new tests, read here to understand what is already covered and which patterns to follow. Only open a test file when you need line-level detail not contained here.
 
 ## Running Tests
 
 ```bash
-python3 -m pytest tests/ -m "not integration" -v   # all mocked tests (259)
+python3 -m pytest tests/ -m "not integration" -v   # all mocked tests (268)
 python3 -m pytest tests/ -m integration            # live sandbox tests (7, needs .env)
 python3 -m pytest tests/test_<module>.py -v        # single file
 ```
@@ -20,8 +20,8 @@ python3 -m pytest tests/test_<module>.py -v        # single file
 | `test_trade_logger.py` | 34 | `TradeLogger` | no |
 | `test_config.py` | 21 | `config.py` | no |
 | `test_main.py` | 45 | `MainApp` | no |
-| `test_cli_interface.py` | 25 | `TradingCLI` | no |
-| `test_integration.py` | 15 | cross-module wiring | no |
+| `test_cli_interface.py` | 32 | `TradingCLI` | no |
+| `test_integration.py` | 17 | cross-module wiring | no |
 
 ---
 
@@ -258,6 +258,17 @@ Inputs `["ord-id"]` → `get_order_status` called, order_id in stdout. `TradeExe
 ### TestMenuLoop (3 tests)
 Inputs `["invalid", "7"]` → "Invalid" in stdout. Inputs `["7"]` → `run()` returns. `run_trading_cli()` with `KeyboardInterrupt` from `input` → "Interrupted"/"Goodbye" in stdout, no exception raised.
 
+### TestLogging (7 tests — Task 8)
+Helper `_cli_with_mock_executor_and_logger()` → `TradingCLI(logger=mock_logger)` with mock executor pre-set.
+
+`test_place_market_order_logs_submission_on_success` — `logger.log_order_submission(result)` called with full order result dict.
+`test_place_market_order_no_logger_does_not_crash` — `logger=None` (default), order placed without crash.
+`test_place_market_order_logger_error_does_not_propagate` — `log_order_submission` raises `RuntimeError`; no exception escapes.
+`test_place_limit_order_logs_submission_on_success` — same as market order variant for limit path.
+`test_place_limit_order_no_logger_does_not_crash` — `logger=None`, no crash.
+`test_cancel_order_logs_cancellation_on_success` — `logger.log_order_cancellation(order_id)` called with the order id string.
+`test_cancel_order_no_logger_does_not_crash` — `logger=None`, no crash.
+
 ---
 
 ## test_integration.py
@@ -285,9 +296,12 @@ Three-step sequence (portfolio error → orders error → success) via `side_eff
 ### TestMenuRouting (2 tests)
 Choices "1" and "5" with `patch.object(app, '_view_portfolio')` / `patch.object(app, '_view_trade_history')` confirm routing works on a real `MainApp` instance.
 
+### TestTradeLoggingPath (2 tests — Task 8)
+`test_launch_trading_passes_logger_to_cli` — patches `main.TradingCLI`; asserts it is constructed with `logger=app.logger`.
+`test_order_placed_via_cli_appears_in_trade_history` — real `TradingCLI(logger=app.logger)` with mock executor drives `_place_market_order`; then `app._view_trade_history()` → ticker visible in stdout.
+
 ---
 
 ## Known Gaps
 
-- `main.py` does not call `TradeLogger` when orders are placed or cancelled via `TradingCLI` — trade history only reflects explicitly logged events. Out of scope for testing as of Task 7.
 - Integration tests for `TestPortfolioPath` use `patch.object` on `display_portfolio_summary` rather than driving through full client mock setup. Full end-to-end portfolio display is covered in `test_portfolio.py::TestDisplayPortfolioSummary`.

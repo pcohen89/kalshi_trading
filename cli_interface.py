@@ -7,6 +7,7 @@ viewing orders, and managing positions.
 """
 
 from trade_executor import TradeExecutor, TradeExecutionError
+from trade_logger import TradeLogger
 
 
 def format_price_dollars(cents: int) -> str:
@@ -86,9 +87,10 @@ def confirm(prompt: str) -> bool:
 class TradingCLI:
     """Interactive command-line interface for trading."""
 
-    def __init__(self):
+    def __init__(self, logger: TradeLogger = None):
         """Initialize the CLI with a trade executor."""
         self.executor = None
+        self.logger = logger
 
     def _ensure_executor(self) -> bool:
         """Ensure executor is initialized. Returns False if initialization fails."""
@@ -271,6 +273,11 @@ class TradingCLI:
             print(f"\n  Order placed successfully!")
             print(f"  Order ID: {order.get('order_id', 'N/A')}")
             print(f"  Status:   {order.get('status', 'N/A')}")
+            if self.logger is not None:
+                try:
+                    self.logger.log_order_submission(result)
+                except Exception:
+                    pass
         except TradeExecutionError as e:
             print(f"\n  Error: {e}")
 
@@ -339,6 +346,11 @@ class TradingCLI:
             print(f"\n  Order placed successfully!")
             print(f"  Order ID: {order.get('order_id', 'N/A')}")
             print(f"  Status:   {order.get('status', 'N/A')}")
+            if self.logger is not None:
+                try:
+                    self.logger.log_order_submission(result)
+                except Exception:
+                    pass
         except TradeExecutionError as e:
             print(f"\n  Error: {e}")
 
@@ -395,6 +407,11 @@ class TradingCLI:
             order = result.get("order", result)
             print(f"\n  Order cancelled successfully!")
             print(f"  Status: {order.get('status', 'cancelled')}")
+            if self.logger is not None:
+                try:
+                    self.logger.log_order_cancellation(order_id)
+                except Exception:
+                    pass
         except TradeExecutionError as e:
             print(f"\n  Error: {e}")
 

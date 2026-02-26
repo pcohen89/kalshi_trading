@@ -250,3 +250,40 @@ class TestMenuRouting:
              patch.object(app, '_view_trade_history') as mock_method:
             app.run()
         mock_method.assert_called_once()
+
+
+# =============================================================================
+# Group 8: Trade logging path (Task 8)
+# =============================================================================
+
+class TestTradeLoggingPath:
+
+    def test_launch_trading_passes_logger_to_cli(self, app):
+        """_launch_trading() constructs TradingCLI with app's logger instance."""
+        with patch('main.TradingCLI') as MockCLI:
+            MockCLI.return_value.run.return_value = None
+            app._launch_trading()
+        MockCLI.assert_called_once_with(logger=app.logger)
+
+    def test_order_placed_via_cli_appears_in_trade_history(self, app, capsys):
+        """Order placed through TradingCLI using app's logger appears in trade history."""
+        cli = TradingCLI(logger=app.logger)
+        cli.executor = Mock()
+        cli.executor.get_market_info.return_value = {
+            "ticker": "LOG-INTTEST", "status": "open", "yes_bid": 40, "yes_ask": 60
+        }
+        cli.executor.place_market_order.return_value = {
+            "order": {
+                "order_id": "log-int-ord-1",
+                "ticker": "LOG-INTTEST",
+                "side": "yes",
+                "count": 1,
+                "status": "resting",
+            }
+        }
+        with patch('builtins.input', side_effect=["LOG-INTTEST", "yes", "1", "yes"]):
+            cli._place_market_order()
+
+        app._view_trade_history()
+        out = capsys.readouterr().out
+        assert "LOG-INTTEST" in out

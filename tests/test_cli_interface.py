@@ -28,6 +28,14 @@ def _cli_with_mock_executor() -> TradingCLI:
     return cli
 
 
+def _cli_with_mock_executor_and_logger():
+    """Return a (TradingCLI, mock_logger) pair with executor and logger pre-set."""
+    mock_logger = Mock()
+    cli = TradingCLI(logger=mock_logger)
+    cli.executor = Mock()
+    return cli, mock_logger
+
+
 # =============================================================================
 # Group 1: Initialization
 # =============================================================================
@@ -341,3 +349,87 @@ class TestMenuLoop:
             run_trading_cli()  # must not raise
         out = capsys.readouterr().out
         assert "Interrupted" in out or "Goodbye" in out
+
+
+# =============================================================================
+# Group 9: Logger wiring (Task 8)
+# =============================================================================
+
+class TestLogging:
+
+    def _open_market(self) -> dict:
+        return {"ticker": "LOG-MKT", "status": "open", "yes_bid": 40, "yes_ask": 60}
+
+    # --- market order ---
+
+    def test_place_market_order_logs_submission_on_success(self):
+        """Successful market order calls logger.log_order_submission with the result."""
+        cli, mock_logger = _cli_with_mock_executor_and_logger()
+        cli.executor.get_market_info.return_value = self._open_market()
+        order_result = {"order": {"order_id": "log-mkt-1", "status": "resting"}}
+        cli.executor.place_market_order.return_value = order_result
+        with patch('builtins.input', side_effect=["LOG-MKT", "yes", "2", "yes"]):
+            cli._place_market_order()
+        mock_logger.log_order_submission.assert_called_once_with(order_result)
+
+    def test_place_market_order_no_logger_does_not_crash(self):
+        """TradingCLI without a logger places market orders without crashing."""
+        cli = _cli_with_mock_executor()  # logger is None
+        cli.executor.get_market_info.return_value = self._open_market()
+        cli.executor.place_market_order.return_value = {
+            "order": {"order_id": "no-log-1", "status": "resting"}
+        }
+        with patch('builtins.input', side_effect=["LOG-MKT", "yes", "1", "yes"]):
+            cli._place_market_order()  # must not raise
+
+    def test_place_market_order_logger_error_does_not_propagate(self):
+        """Exception raised by logger.log_order_submission is swallowed."""
+        cli, mock_logger = _cli_with_mock_executor_and_logger()
+        cli.executor.get_market_info.return_value = self._open_market()
+        cli.executor.place_market_order.return_value = {
+            "order": {"order_id": "log-err-1", "status": "resting"}
+        }
+        mock_logger.log_order_submission.side_effect = RuntimeError("disk full")
+        with patch('builtins.input', side_effect=["LOG-MKT", "yes", "1", "yes"]):
+            cli._place_market_order()  # must not raise
+
+    # --- limit order ---
+
+    def test_place_limit_order_logs_submission_on_success(self):
+        """Successful limit order calls logger.log_order_submission with the result."""
+        cli, mock_logger = _cli_with_mock_executor_and_logger()
+        cli.executor.get_market_info.return_value = self._open_market()
+        order_result = {"order": {"order_id": "log-lmt-1", "status": "resting"}}
+        cli.executor.place_limit_order.return_value = order_result
+        with patch('builtins.input', side_effect=["LOG-MKT", "yes", "2", "50", "yes"]):
+            cli._place_limit_order()
+        mock_logger.log_order_submission.assert_called_once_with(order_result)
+
+    def test_place_limit_order_no_logger_does_not_crash(self):
+        """TradingCLI without a logger places limit orders without crashing."""
+        cli = _cli_with_mock_executor()  # logger is None
+        cli.executor.get_market_info.return_value = self._open_market()
+        cli.executor.place_limit_order.return_value = {
+            "order": {"order_id": "no-log-lmt-1", "status": "resting"}
+        }
+        with patch('builtins.input', side_effect=["LOG-MKT", "yes", "1", "50", "yes"]):
+            cli._place_limit_order()  # must not raise
+
+    # --- cancel order ---
+
+    def test_cancel_order_logs_cancellation_on_success(self):
+        """Successful cancellation calls logger.log_order_cancellation with the order id."""
+        cli, mock_logger = _cli_with_mock_executor_and_logger()
+        cli.executor.list_open_orders.return_value = []
+        cli.executor.cancel_order.return_value = {"order": {"status": "cancelled"}}
+        with patch('builtins.input', side_effect=["cancel-log-1", "yes"]):
+            cli._cancel_order()
+        mock_logger.log_order_cancellation.assert_called_once_with("cancel-log-1")
+
+    def test_cancel_order_no_logger_does_not_crash(self):
+        """TradingCLI without a logger cancels orders without crashing."""
+        cli = _cli_with_mock_executor()  # logger is None
+        cli.executor.list_open_orders.return_value = []
+        cli.executor.cancel_order.return_value = {"order": {"status": "cancelled"}}
+        with patch('builtins.input', side_effect=["cancel-no-log-1", "yes"]):
+            cli._cancel_order()  # must not raise

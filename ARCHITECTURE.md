@@ -162,9 +162,11 @@ Storage: dual-write to `trades.log` (human-readable, `TimedRotatingFileHandler`,
 
 ### cli_interface.py
 
-**Class: `TradingCLI`** — interactive menu loop. Lazy-initializes `TradeExecutor` on first use via `_ensure_executor()`.
+**Class: `TradingCLI`** — interactive menu loop. Constructor: `TradingCLI(logger: TradeLogger = None)`. Lazy-initializes `TradeExecutor` on first use via `_ensure_executor()`.
 
 Menu options: (1) Search markets, (2) Place market order, (3) Place limit order, (4) View open orders, (5) Cancel order, (6) Check order status, (7) Exit.
+
+Logging: on successful market/limit order placement calls `logger.log_order_submission(result)`; on successful cancellation calls `logger.log_order_cancellation(order_id)`. Logger is optional — skipped gracefully when `None`. Logging exceptions are swallowed so they never crash the trading loop.
 
 Entry point: `run_trading_cli()` or `python3 cli_interface.py`.
 

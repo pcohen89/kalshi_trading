@@ -100,7 +100,7 @@ class MainApp:
     def _launch_trading(self) -> None:
         """Launch the interactive trading sub-menu."""
         try:
-            cli = TradingCLI()
+            cli = TradingCLI(logger=self.logger)
             cli.run()
         except Exception as exc:
             print(f"\n  Error in trading interface: {exc}")
