@@ -333,6 +333,138 @@ class TestKalshiAPIError:
 
 
 # =============================================================================
+# Historical + Candlestick Method Tests (Task 9)
+# =============================================================================
+
+class TestKalshiClientHistoricalMethods:
+    """Tests for get_historical_cutoff, get_historical_markets,
+    get_market_candlesticks, and get_batch_candlesticks."""
+
+    @pytest.fixture
+    def mock_config(self):
+        """Mock config module — identical to TestKalshiClientUnit fixture."""
+        with patch('kalshi_client.get_api_credentials') as mock_creds, \
+             patch('kalshi_client.get_api_base_url') as mock_url:
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.primitives import serialization
+
+            private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=2048,
+            )
+            pem = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            ).decode('utf-8')
+
+            mock_creds.return_value = ("test_api_key", pem)
+            mock_url.return_value = "https://demo-api.kalshi.co/trade-api/v2"
+            yield
+
+    @pytest.fixture
+    def client(self, mock_config):
+        from kalshi_client import KalshiClient
+        return KalshiClient()
+
+    def test_get_historical_cutoff_calls_correct_endpoint(self, client):
+        client._make_request = Mock(return_value={"live_cutoff_ts": 1000, "historical_cutoff_ts": 900})
+        result = client.get_historical_cutoff()
+        client._make_request.assert_called_once_with("GET", "/historical/cutoff")
+        assert result["live_cutoff_ts"] == 1000
+
+    def test_get_historical_markets_no_filters(self, client):
+        client._make_request = Mock(return_value={"markets": [], "cursor": ""})
+        client.get_historical_markets()
+        call_args = client._make_request.call_args
+        assert call_args[0][1] == "/historical/markets"
+        assert call_args[1]["params"]["limit"] == 1000
+        assert "series_ticker" not in call_args[1]["params"]
+
+    def test_get_historical_markets_with_series_ticker(self, client):
+        client._make_request = Mock(return_value={"markets": [], "cursor": ""})
+        client.get_historical_markets(series_ticker="KXBTC")
+        call_args = client._make_request.call_args
+        assert call_args[1]["params"]["series_ticker"] == "KXBTC"
+
+    def test_get_historical_markets_with_cursor(self, client):
+        client._make_request = Mock(return_value={"markets": [], "cursor": ""})
+        client.get_historical_markets(cursor="abc123")
+        call_args = client._make_request.call_args
+        assert call_args[1]["params"]["cursor"] == "abc123"
+
+    def test_get_historical_markets_with_tickers_list(self, client):
+        client._make_request = Mock(return_value={"markets": [], "cursor": ""})
+        client.get_historical_markets(tickers=["KXBTC-A", "KXBTC-B"])
+        call_args = client._make_request.call_args
+        assert call_args[1]["params"]["tickers"] == "KXBTC-A,KXBTC-B"
+
+    def test_get_market_candlesticks_live_path(self, client):
+        client._make_request = Mock(return_value={"candlesticks": []})
+        client.get_market_candlesticks("KXBTC-25DEC", historical=False)
+        call_args = client._make_request.call_args
+        assert call_args[0][1] == "/markets/KXBTC-25DEC/candlesticks"
+
+    def test_get_market_candlesticks_historical_path(self, client):
+        client._make_request = Mock(return_value={"candlesticks": []})
+        client.get_market_candlesticks("KXBTC-25DEC", historical=True)
+        call_args = client._make_request.call_args
+        assert call_args[0][1] == "/historical/markets/KXBTC-25DEC/candlesticks"
+
+    def test_get_market_candlesticks_default_period_interval(self, client):
+        client._make_request = Mock(return_value={"candlesticks": []})
+        client.get_market_candlesticks("KXBTC-25DEC")
+        call_args = client._make_request.call_args
+        assert call_args[1]["params"]["period_interval"] == 1440
+
+    def test_get_market_candlesticks_with_start_end_ts(self, client):
+        client._make_request = Mock(return_value={"candlesticks": []})
+        client.get_market_candlesticks("KXBTC-25DEC", start_ts=1000, end_ts=2000)
+        call_args = client._make_request.call_args
+        assert call_args[1]["params"]["start_ts"] == 1000
+        assert call_args[1]["params"]["end_ts"] == 2000
+
+    def test_get_market_candlesticks_omits_none_ts(self, client):
+        client._make_request = Mock(return_value={"candlesticks": []})
+        client.get_market_candlesticks("KXBTC-25DEC")
+        call_args = client._make_request.call_args
+        assert "start_ts" not in call_args[1]["params"]
+        assert "end_ts" not in call_args[1]["params"]
+
+    def test_get_batch_candlesticks_comma_separates_tickers(self, client):
+        client._make_request = Mock(return_value={"candlesticks": {}})
+        client.get_batch_candlesticks(["KXBTC-A", "KXBTC-B", "KXBTC-C"])
+        call_args = client._make_request.call_args
+        assert call_args[0][1] == "/markets/candlesticks"
+        assert call_args[1]["params"]["tickers"] == "KXBTC-A,KXBTC-B,KXBTC-C"
+
+    def test_get_batch_candlesticks_returns_dict_by_ticker(self, client):
+        expected = {"candlesticks": {"KXBTC-A": [{"volume": 100}]}}
+        client._make_request = Mock(return_value=expected)
+        result = client.get_batch_candlesticks(["KXBTC-A"])
+        assert result == expected
+
+    def test_get_batch_candlesticks_100_tickers(self, client):
+        tickers = [f"KXBTC-{i:03d}" for i in range(100)]
+        client._make_request = Mock(return_value={"candlesticks": {}})
+        client.get_batch_candlesticks(tickers)
+        call_args = client._make_request.call_args
+        assert len(call_args[1]["params"]["tickers"].split(",")) == 100
+
+    def test_get_historical_cutoff_raises_on_api_error(self, client):
+        from kalshi_client import KalshiAPIError
+        client._make_request = Mock(side_effect=KalshiAPIError("server error", status_code=500))
+        with pytest.raises(KalshiAPIError):
+            client.get_historical_cutoff()
+
+    def test_get_historical_markets_raises_on_api_error(self, client):
+        from kalshi_client import KalshiAPIError
+        client._make_request = Mock(side_effect=KalshiAPIError("server error", status_code=500))
+        with pytest.raises(KalshiAPIError):
+            client.get_historical_markets()
+
+
+# =============================================================================
 # Integration Tests (requires sandbox credentials)
 # =============================================================================
 

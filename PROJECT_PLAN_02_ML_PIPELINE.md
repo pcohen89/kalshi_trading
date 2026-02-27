@@ -1,8 +1,9 @@
 # Kalshi Trading System — V2 ML Pipeline
 
-> **STATUS: PLANNED ⏳**
-> Builds on the V1 core infrastructure (PROJECT_PLAN_01). All 275 V1 tests remain green throughout.
+> **STATUS: IN PROGRESS 🔄**
+> Builds on the V1 core infrastructure (PROJECT_PLAN_01). All 337 tests (275 V1 + 62 new) remain green throughout.
 > Covers: historical data collection → EDA → gradient boosting → model evaluation → active market scoring.
+> Tasks 9, 10, 11 complete. Tasks 12–17 pending.
 
 ---
 
@@ -39,9 +40,9 @@ Kalshi enforces the live/historical API split on **March 6, 2026**. All data col
 
 | Task | Description | New Tests | Status |
 |------|-------------|-----------|--------|
-| 9  | Extend KalshiClient with historical + candlestick endpoints | ~15 | ⏳ Pending |
-| 10 | DataStore — CSV persistence layer | ~15 | ⏳ Pending |
-| 11 | DataCollector — market + candle ingestion | ~15 | ⏳ Pending |
+| 9  | Extend KalshiClient with historical + candlestick endpoints | 15 | ✅ Complete |
+| 10 | DataStore — CSV persistence layer | 28 | ✅ Complete |
+| 11 | DataCollector — market + candle ingestion | 19 | ✅ Complete |
 | 12 | EDA Notebooks — behavioural pattern analysis | 0 (notebooks) | ⏳ Pending |
 | 13 | FeatureEngineer — (ticker, day) feature matrix | ~20 | ⏳ Pending |
 | 14 | ModelTrainer — XGBoost regression with time-based split | ~15 | ⏳ Pending |
@@ -171,7 +172,7 @@ Install: `pip install -r requirements_ml.txt`
 ## Task 9: Extend KalshiClient with Historical + Candlestick Endpoints
 
 **File**: `kalshi_client.py`
-**Status**: ⏳ Pending
+**Status**: ✅ Complete
 
 ### Why
 `KalshiClient` has no support for `/historical/` endpoints or any candlestick endpoint. The data collector needs both. All API logic lives in `KalshiClient` by convention.
@@ -275,7 +276,7 @@ See **Data Conventions → Candle JSON shape** above for the exact JSON structur
 ## Task 10: DataStore — CSV Persistence Layer
 
 **File**: `data/data_store.py`
-**Status**: ⏳ Pending
+**Status**: ✅ Complete
 
 ### Why
 No local persistence exists in V1. The ML pipeline needs a local store to: avoid re-fetching the same data, share data between pipeline steps, and support EDA notebook exploration.
@@ -365,7 +366,7 @@ Path(self.markets_path).parent.mkdir(parents=True, exist_ok=True)
 ## Task 11: DataCollector — Market + Candle Ingestion
 
 **File**: `data/data_collector.py`
-**Status**: ⏳ Pending
+**Status**: ✅ Complete
 
 ### Why
 Orchestrates the full data pull across both live and historical API endpoints, with checkpointing to avoid re-fetching and resilient error handling per ticker.

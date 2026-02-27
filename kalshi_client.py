@@ -404,6 +404,92 @@ class KalshiClient:
         return self._make_request("GET", f"/markets/{ticker}")
 
     # -------------------------------------------------------------------------
+    # Historical Methods
+    # -------------------------------------------------------------------------
+
+    def get_historical_cutoff(self) -> dict:
+        """Return the live/historical boundary timestamps.
+
+        Endpoint: GET /historical/cutoff
+        Returns: {"live_cutoff_ts": int, "historical_cutoff_ts": int}
+        """
+        return self._make_request("GET", "/historical/cutoff")
+
+    def get_historical_markets(
+        self,
+        limit: int = 1000,
+        cursor: Optional[str] = None,
+        series_ticker: Optional[str] = None,
+        event_ticker: Optional[str] = None,
+        tickers: Optional[list] = None,
+    ) -> dict:
+        """Fetch markets older than the historical cutoff.
+
+        Endpoint: GET /historical/markets
+        Returns: {"markets": [...], "cursor": str}
+        """
+        params: dict = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        if series_ticker:
+            params["series_ticker"] = series_ticker
+        if event_ticker:
+            params["event_ticker"] = event_ticker
+        if tickers:
+            params["tickers"] = ",".join(tickers)
+        return self._make_request("GET", "/historical/markets", params=params)
+
+    def get_market_candlesticks(
+        self,
+        ticker: str,
+        period_interval: int = 1440,
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+        historical: bool = False,
+    ) -> dict:
+        """Fetch OHLC candlesticks for a single market.
+
+        historical=False → GET /markets/{ticker}/candlesticks
+        historical=True  → GET /historical/markets/{ticker}/candlesticks
+        period_interval: 1 (minute), 60 (hour), 1440 (day).
+        Returns: {"candlesticks": [...]}
+        """
+        if historical:
+            endpoint = f"/historical/markets/{ticker}/candlesticks"
+        else:
+            endpoint = f"/markets/{ticker}/candlesticks"
+        params: dict = {"period_interval": period_interval}
+        if start_ts is not None:
+            params["start_ts"] = start_ts
+        if end_ts is not None:
+            params["end_ts"] = end_ts
+        return self._make_request("GET", endpoint, params=params)
+
+    def get_batch_candlesticks(
+        self,
+        tickers: list,
+        period_interval: int = 1440,
+        start_ts: Optional[int] = None,
+        end_ts: Optional[int] = None,
+    ) -> dict:
+        """Fetch OHLC candlesticks for up to 100 live tickers in one call.
+
+        Endpoint: GET /markets/candlesticks
+        tickers passed as comma-separated query param.
+        Only works for live (non-historical) markets.
+        Returns: {"candlesticks": {ticker: [...]}}
+        """
+        params: dict = {
+            "tickers": ",".join(tickers),
+            "period_interval": period_interval,
+        }
+        if start_ts is not None:
+            params["start_ts"] = start_ts
+        if end_ts is not None:
+            params["end_ts"] = end_ts
+        return self._make_request("GET", "/markets/candlesticks", params=params)
+
+    # -------------------------------------------------------------------------
     # Order Methods
     # -------------------------------------------------------------------------
 

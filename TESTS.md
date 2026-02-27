@@ -1,11 +1,11 @@
 # Test Suite — Kalshi Trading System
 
-Agent-readable test map. Covers all 275 tests across 8 files. Before adding new tests, read here to understand what is already covered and which patterns to follow. Only open a test file when you need line-level detail not contained here.
+Agent-readable test map. Covers all 337 tests across 10 files. Before adding new tests, read here to understand what is already covered and which patterns to follow. Only open a test file when you need line-level detail not contained here.
 
 ## Running Tests
 
 ```bash
-python3 -m pytest tests/ -m "not integration" -v   # all mocked tests (268)
+python3 -m pytest tests/ -m "not integration" -v   # all mocked tests (330)
 python3 -m pytest tests/ -m integration            # live sandbox tests (7, needs .env)
 python3 -m pytest tests/test_<module>.py -v        # single file
 ```
@@ -14,7 +14,7 @@ python3 -m pytest tests/test_<module>.py -v        # single file
 
 | File | Tests | Module under test | Live API? |
 |------|-------|-------------------|-----------|
-| `test_api_client.py` | 25 | `KalshiClient` | 7 (marked `integration`) |
+| `test_api_client.py` | 40 | `KalshiClient` | 7 (marked `integration`) |
 | `test_trade_executor.py` | 40 | `TradeExecutor` | no |
 | `test_portfolio.py` | 61 | `PortfolioTracker` | no |
 | `test_trade_logger.py` | 34 | `TradeLogger` | no |
@@ -22,6 +22,8 @@ python3 -m pytest tests/test_<module>.py -v        # single file
 | `test_main.py` | 45 | `MainApp` | no |
 | `test_cli_interface.py` | 32 | `TradingCLI` | no |
 | `test_integration.py` | 17 | cross-module wiring | no |
+| `test_data_store.py` | 28 | `DataStore` | no |
+| `test_data_collector.py` | 19 | `DataCollector` | no |
 
 ---
 
@@ -84,6 +86,28 @@ Fixture `mock_config` patches `get_api_credentials` and `get_api_base_url`, gene
 ### TestKalshiAPIError (3 tests)
 
 Checks `str(error)` formatting with/without status code; `response_body` attribute stored correctly.
+
+### TestKalshiClientHistoricalMethods (15 tests — mocked)
+
+Tests for the 4 new historical/candlestick methods added in Task 9. Uses same `mock_config` + `client` fixtures as `TestKalshiClientUnit`.
+
+| Test | What it checks |
+|------|----------------|
+| `test_get_historical_cutoff_calls_correct_endpoint` | Calls `GET /historical/cutoff` |
+| `test_get_historical_cutoff_returns_response` | Returns raw response dict |
+| `test_get_historical_markets_calls_correct_endpoint` | Calls `GET /historical/markets` |
+| `test_get_historical_markets_sends_series_ticker_param` | `series_ticker` passed as query param |
+| `test_get_historical_markets_sends_event_ticker_param` | `event_ticker` passed as query param |
+| `test_get_historical_markets_sends_tickers_as_comma_joined` | `tickers` list joined with comma |
+| `test_get_historical_markets_omits_none_params` | `None` args not included in params |
+| `test_get_market_candlesticks_live_path` | `historical=False` → `/markets/{ticker}/candlesticks` |
+| `test_get_market_candlesticks_historical_path` | `historical=True` → `/historical/markets/{ticker}/candlesticks` |
+| `test_get_market_candlesticks_sends_period_interval` | `period_interval` param sent |
+| `test_get_market_candlesticks_sends_start_and_end_ts` | `start_ts`/`end_ts` sent when provided |
+| `test_get_market_candlesticks_omits_none_ts` | `start_ts`/`end_ts` omitted when `None` |
+| `test_get_batch_candlesticks_calls_correct_endpoint` | Calls `GET /markets/candlesticks` |
+| `test_get_batch_candlesticks_joins_tickers` | List of 100 tickers joined with comma |
+| `test_get_batch_candlesticks_propagates_api_error` | `KalshiAPIError` propagates unchanged |
 
 ### TestKalshiClientIntegration (7 tests — `@pytest.mark.integration`)
 
@@ -302,6 +326,53 @@ Choices "1" and "5" with `patch.object(app, '_view_portfolio')` / `patch.object(
 
 ---
 
+---
+
+## test_data_store.py
+
+Fixtures: `tmp_path` (pytest built-in) → isolated CSV paths. Helpers: `_market()` → minimal market dict; `_candle()` → minimal candle dict.
+
+### TestSaveMarkets (8 tests)
+Saves a single market → CSV created; returns `1`. Empty list → `0` and no file created. Idempotent: save same ticker twice → returns `0` on second call. Batch with duplicate ticker → counts once. Existing market updated (keep-last). `settlement_value_dollars` converted to cents correctly. Missing `settlement_value_dollars` → `settlement_value_cents=0`. Returns correct new-count when adding to pre-existing file.
+
+### TestSaveCandles (7 tests)
+Saves single candle → CSV created; returns `1`. Empty candle list → `0`. Same `(ticker, period_end_ts, granularity)` key idempotent → `0` on second call. Batch with duplicate keys counted once. Price fields flattened to `_cents` columns. `yes_bid.close` → `yes_bid_cents`, `yes_ask.close` → `yes_ask_cents`. Returns correct new-count when appending to existing file.
+
+### TestGetMarkets (4 tests)
+No CSV → empty DataFrame with correct columns. CSV exists → full DataFrame. `series_ticker` filter applied. `status` filter applied.
+
+### TestGetCandles (3 tests)
+No CSV → empty DataFrame. CSV exists → full DataFrame. `ticker` filter applied.
+
+### TestTickerHasCandles (3 tests)
+No CSV → `False`. Ticker present → `True`. Ticker absent → `False`.
+
+### TestGetCollectedTickers (3 tests)
+No CSV → empty set. Multiple tickers → correct set. Empty CSV (header only) → empty set.
+
+---
+
+## test_data_collector.py
+
+Fixtures: `mock_client = Mock()`, `mock_store` with `get_collected_tickers → set()`, `get_markets → empty_df`, `save_markets → 0`, `save_candles → 0`; `collector = DataCollector(client=mock_client, store=mock_store)`.
+
+Helpers: `_empty_df()`, `_markets_df(tickers_and_ts)`, `_markets_df_with_close_time(tickers_info)`, `_market_dict(ticker, close_time)`, `_candle(ts)`.
+
+### TestGetCutoffTs (2 tests)
+Returns `live_cutoff_ts` from API response. Calls API only once across two calls (caching).
+
+### TestCollectSettledMarkets (6 tests)
+Calls both `get_markets` and `get_historical_markets` once per series. Deduplicates markets that appear in both endpoints (same ticker → one result). Filters out markets outside `days_back` window. Calls `store.save_markets` when markets found. Returns new count from `save_markets`. Empty responses → empty list, `0` new count, `save_markets` not called.
+
+### TestCollectCandlesticks (8 tests)
+Skips tickers already in store. Routes to `get_batch_candlesticks` for live markets (settlement_ts in future). Routes to `get_market_candlesticks(historical=True)` for historical markets (settlement_ts old). Continues past `KalshiAPIError` on individual tickers. Batches 150 live tickers into 2 calls (100+50). Prints start line + one progress line per live batch (verified with `capsys`). Prints progress at 100 and 150 for 150 historical tickers. Falls back to `close_time` when `settlement_ts` absent.
+
+### TestRun (3 tests)
+Returns `CollectionSummary` with `markets_found ≥ 0`. Prints `[collect]` + `Done` to stdout. `markets_new` comes from `save_markets` return value, not candle presence.
+
+---
+
 ## Known Gaps
 
 - Integration tests for `TestPortfolioPath` use `patch.object` on `display_portfolio_summary` rather than driving through full client mock setup. Full end-to-end portfolio display is covered in `test_portfolio.py::TestDisplayPortfolioSummary`.
+- `ticker_has_candles` reloads the full CSV on every call — suitable for current use but a potential bottleneck at scale.

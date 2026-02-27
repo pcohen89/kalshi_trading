@@ -1,4 +1,4 @@
-# Architecture — Kalshi Trading System (V1)
+# Architecture — Kalshi Trading System (V1 + V2 Data Layer)
 
 Agent-readable codebase map. For conventions and workflow rules, see `CLAUDE.md`.
 
@@ -10,6 +10,10 @@ main.py ──> cli_interface.py ──> trade_executor.py ──> kalshi_client
       ├──> portfolio_tracker.py ───────────────────────────┘                   │
       ├──> trade_logger.py (standalone, imports config for log level) ─────────┘
       └──> kalshi_client.py (shared instance passed to executor + tracker)
+
+data/data_collector.py ──> kalshi_client.py ──> config.py
+                       └──> data/data_store.py
+                       └──> trade_executor.py (POPULAR_SERIES class attr)
 ```
 
 ## Data Flow
@@ -32,11 +36,14 @@ Trade events ─> TradeLogger ─> logs/trades.log + logs/trades.jsonl + logs/er
 |------|-------|---------|
 | `main.py` | 130 | Top-level entry point; initialises shared dependencies, routes menu to all modules |
 | `config.py` | 127 | Loads `.env`, validates credentials, exposes environment-aware config |
-| `kalshi_client.py` | 604 | Authenticated HTTP client for Kalshi API v2 with RSA signing, retries, rate-limit handling |
+| `kalshi_client.py` | ~685 | Authenticated HTTP client for Kalshi API v2 with RSA signing, retries, rate-limit handling |
 | `trade_executor.py` | 339 | High-level trade operations with input validation; wraps KalshiClient |
 | `portfolio_tracker.py` | 634 | Position listing, unrealized P&L (mark-to-market), realized P&L (settlements + FIFO fill matching) |
 | `trade_logger.py` | 373 | Event logging to rotating `.log` files + `.jsonl` structured store; CSV export |
 | `cli_interface.py` | 447 | Interactive menu-driven CLI for trading operations (launched as sub-loop from main.py) |
+| `data/data_store.py` | ~194 | CSV persistence layer for markets and candles; upsert semantics with deduplication |
+| `data/data_collector.py` | ~215 | Orchestrates live + historical market and candlestick ingestion; checkpointing |
+| `requirements_ml.txt` | — | ML-specific dependencies (pandas, numpy, xgboost, scikit-learn, etc.) |
 
 ## Exceptions
 
@@ -49,6 +56,8 @@ All custom exceptions and where they originate:
 | `TradeExecutionError` | `trade_executor.py` | Validation failures (side, qty, price) or KalshiAPIError during trade ops |
 | `PortfolioError` | `portfolio_tracker.py` | Failed position/settlement/fill fetches or market price lookups |
 | `TradeLoggerError` | `trade_logger.py` | Naive datetime passed to date-range filter |
+| `DataStoreError` | `data/data_store.py` | I/O or data integrity failures in CSV persistence |
+| `DataCollectionError` | `data/data_collector.py` | Unrecoverable data collection failures |
 
 ## Module Details
 
@@ -90,6 +99,10 @@ Retry policy: 3 retries with exponential backoff for 5xx errors; 5 retries for 4
 | `get_orders` | `(ticker=None, status=None, limit=100, cursor=None) -> dict` | `{orders: [...], cursor}` | `GET /portfolio/orders` |
 | `get_fills` | `(ticker=None, order_id=None, limit=100, cursor=None) -> dict` | `{fills: [...], cursor}` | `GET /portfolio/fills` |
 | `get_settlements` | `(limit=100, cursor=None) -> dict` | `{settlements: [...], cursor}` | `GET /portfolio/settlements` |
+| `get_historical_cutoff` | `() -> dict` | `{live_cutoff_ts: int, historical_cutoff_ts: int}` (epoch seconds) | `GET /historical/cutoff` |
+| `get_historical_markets` | `(limit=1000, cursor=None, series_ticker=None, event_ticker=None, tickers=None) -> dict` | `{markets: [...], cursor}` | `GET /historical/markets` |
+| `get_market_candlesticks` | `(ticker, period_interval=1440, start_ts=None, end_ts=None, historical=False) -> dict` | `{candlesticks: [...]}` | `GET /markets/{ticker}/candlesticks` or `GET /historical/markets/{ticker}/candlesticks` |
+| `get_batch_candlesticks` | `(tickers: list, period_interval=1440, start_ts=None, end_ts=None) -> dict` | `{candlesticks: {ticker: [...]}}` | `GET /markets/candlesticks` |
 
 Key internal methods: `_make_request(method, endpoint, params, json_data)` handles auth, retries, error parsing. `_sign_request(method, path, timestamp)` produces RSA-PSS signature. `_parse_error_response(response)` handles nested `{"error": {"message": ..., "details": ...}}` format.
 
@@ -172,22 +185,72 @@ Entry point: `run_trading_cli()` or `python3 cli_interface.py`.
 
 Helper functions (module-level): `format_price_dollars(cents)`, `format_order_summary(order)`, `print_header(title)`, `print_market_info(market)`, `get_input(prompt, validator, error_msg)`, `get_int_input(prompt, min_val, max_val)`, `confirm(prompt)`.
 
+### data/data_store.py
+
+**Class: `DataStore`** — CSV persistence layer. Constructor: `DataStore(markets_path="data_store/markets.csv", candles_path="data_store/candles.csv")`. Creates parent directories on init.
+
+Schema constants: `MARKETS_COLUMNS` (12 columns), `CANDLES_COLUMNS` (11 columns).
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `save_markets` | `(markets: list[dict]) -> int` | Count of tickers not previously present; upserts on `ticker`, keeps last |
+| `save_candles` | `(ticker, candles: list[dict], granularity: int) -> int` | Count of new `(ticker, period_end_ts, granularity)` triples; upserts, keeps last |
+| `get_markets` | `(series_ticker=None, status=None) -> pd.DataFrame` | Markets DataFrame, optionally filtered |
+| `get_candles` | `(ticker=None) -> pd.DataFrame` | Candles DataFrame, optionally filtered by ticker |
+| `ticker_has_candles` | `(ticker: str) -> bool` | True if any candle row exists for ticker |
+| `get_collected_tickers` | `() -> set` | Set of tickers with at least one candle row (checkpointing) |
+
+Storage: `data_store/markets.csv` and `data_store/candles.csv` (both gitignored). Candle flattening: `end_period_ts` → ISO8601 string; `price.{open,high,low,close}` → `{open,high,low,close}_cents`; `yes_bid.close` → `yes_bid_cents`; `yes_ask.close` → `yes_ask_cents`. `settlement_value_dollars` → `settlement_value_cents` (× 100, rounded). New-row count uses set subtraction to handle intra-batch duplicates correctly.
+
+---
+
+### data/data_collector.py
+
+**Class: `DataCollector`** — ingestion orchestrator. Constructor: `DataCollector(client: KalshiClient = None, store: DataStore = None)`. Caches `live_cutoff_ts` after first API call.
+
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `get_cutoff_ts` | `() -> int` | `live_cutoff_ts` epoch seconds; cached after first call |
+| `collect_settled_markets` | `(series_tickers=None, days_back=180) -> tuple[list, int]` | `(markets_list, new_count)` — filters by `close_time` within `days_back`; saves to store |
+| `collect_candlesticks` | `(tickers, granularity=1440, days_back=180) -> dict` | `{ticker: candle_count}` — skips already-collected; routes live→batch, historical→per-ticker |
+| `run` | `(series_tickers=None, days_back=180) -> CollectionSummary` | Runs markets + candles in sequence; prints summary |
+
+Routing logic: compares each market's `settlement_ts` (fallback: `close_time`) parsed to epoch seconds against `live_cutoff_ts`. Epoch ≤ cutoff → historical per-ticker; epoch > cutoff (or unknown) → live batch. Live tickers batched in chunks of `BATCH_SIZE=100`. Continues past individual ticker `KalshiAPIError`s.
+
+Progress output: start line `[collect] Fetching candles for N tickers (X live batch, Y historical per-ticker)`, then progress after each live batch and every 100 historical tickers (plus final).
+
+**Data types**:
+- `CollectionSummary` — dataclass: `markets_found, markets_new, tickers_with_candles, candles_collected, errors`; `__str__` produces `[collect] Done. ...` line.
+- `DataCollectionError` — raised for unrecoverable failures.
+
+Module-level helpers: `_within_window(market, cutoff_date)`, `_parse_ts(ts_str)`.
+Module-level alias: `POPULAR_SERIES = TradeExecutor.POPULAR_SERIES` (avoids circular import at class level).
+
+Private paginators: `_paginate_markets(series_ticker, status)`, `_paginate_historical_markets(series_ticker)` — both use `MAX_PAGES=50` safety limit.
+
+---
+
 ## Tests
 
 All tests use `unittest.mock.Mock()` for the KalshiClient — no live API calls in unit tests.
 
 | Test file | Tests | Covers |
 |-----------|-------|--------|
-| `tests/test_api_client.py` | 25 | KalshiClient (18 unit + 6 integration + 1 other) |
+| `tests/test_api_client.py` | 40 | KalshiClient (18 unit + 15 historical/candlestick + 7 integration) |
 | `tests/test_trade_executor.py` | 40 | TradeExecutor |
 | `tests/test_portfolio.py` | 61 | PortfolioTracker |
 | `tests/test_trade_logger.py` | 34 | TradeLogger |
 | `tests/test_config.py` | 21 | Config loading/validation |
 | `tests/test_main.py` | 45 | MainApp (init, menu routing, all action handlers, shutdown) |
+| `tests/test_cli_interface.py` | 32 | TradingCLI |
+| `tests/test_integration.py` | 17 | cross-module wiring |
+| `tests/test_data_store.py` | 28 | DataStore (save, read, dedup, new-row counts) |
+| `tests/test_data_collector.py` | 19 | DataCollector (routing, checkpointing, progress, run summary) |
 
 Run all: `python3 -m pytest tests/ -v`
 Run one module: `python3 -m pytest tests/test_portfolio.py -v`
 Integration only: `pytest tests/test_api_client.py -m integration`
+Mocked only: `python3 -m pytest tests/ -m "not integration" -v`
 
 ### main.py
 
@@ -208,4 +271,4 @@ Module-level entry point: `main()` or `python3 main.py`.
 
 ## Not Yet Implemented
 
-- Task 7: comprehensive integration testing
+- Tasks 12–17: EDA notebooks, FeatureEngineer, ModelTrainer, ModelEvaluator, MarketScorer, MLPipeline CLI (V2 ML pipeline)
