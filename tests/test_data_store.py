@@ -144,6 +144,14 @@ class TestSaveCandles:
         count = store.save_candles("KXBTC-A", [], granularity=1440)
         assert count == 0
 
+    def test_candle_missing_end_period_ts_is_skipped(self, store):
+        bad = {"price": {"open": 40, "high": 50, "low": 35, "close": 45},
+               "yes_bid": {"close": 44}, "yes_ask": {"close": 46},
+               "volume": 100, "open_interest": 200}
+        count = store.save_candles("KXBTC-A", [bad], granularity=1440)
+        assert count == 0
+        assert not os.path.exists(store.candles_path)
+
 
 # ---------------------------------------------------------------------------
 # get_markets

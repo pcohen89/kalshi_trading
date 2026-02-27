@@ -463,6 +463,11 @@ class TestKalshiClientHistoricalMethods:
         with pytest.raises(KalshiAPIError):
             client.get_historical_markets()
 
+    def test_get_batch_candlesticks_raises_on_empty_tickers(self, client):
+        from kalshi_client import KalshiAPIError
+        with pytest.raises(KalshiAPIError, match="empty"):
+            client.get_batch_candlesticks([])
+
 
 # =============================================================================
 # Integration Tests (requires sandbox credentials)

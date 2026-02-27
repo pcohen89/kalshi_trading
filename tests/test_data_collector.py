@@ -295,6 +295,19 @@ class TestCollectCandlesticks:
         assert "100/150" in progress_lines[0]
         assert "150/150" in progress_lines[1]
 
+    def test_batch_response_missing_candlesticks_key_records_zeros(
+        self, collector, mock_client, mock_store
+    ):
+        """A batch response without 'candlesticks' key must not silently drop tickers."""
+        mock_store.get_markets.return_value = _empty_df()
+        mock_client.get_historical_cutoff.return_value = {"live_cutoff_ts": 1000}
+        # Response missing the expected key entirely
+        mock_client.get_batch_candlesticks.return_value = {"status": "ok"}
+
+        result = collector.collect_candlesticks(["KXBTC-A", "KXBTC-B"])
+        assert result["KXBTC-A"] == 0
+        assert result["KXBTC-B"] == 0
+
     def test_routes_via_close_time_when_settlement_ts_absent(self, collector, mock_client, mock_store):
         """Markets without settlement_ts fall back to close_time for live/historical routing."""
         # close_time is in 2020 → should be routed to historical endpoint

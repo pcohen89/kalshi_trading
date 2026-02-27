@@ -172,9 +172,18 @@ class DataCollector:
                 resp = self.client.get_batch_candlesticks(
                     batch, period_interval=granularity, start_ts=start_ts, end_ts=end_ts
                 )
-                candles_by_ticker = resp.get("candlesticks", {})
-                for ticker, candles in candles_by_ticker.items():
-                    results[ticker] = self.store.save_candles(ticker, candles, granularity)
+                if "candlesticks" not in resp:
+                    logger.warning("[collect] Batch response missing 'candlesticks' key: %r", resp)
+                    for ticker in batch:
+                        results[ticker] = 0
+                else:
+                    candles_by_ticker = resp["candlesticks"]
+                    for ticker, candles in candles_by_ticker.items():
+                        results[ticker] = self.store.save_candles(ticker, candles, granularity)
+                    # Tickers the API returned no candles for
+                    for ticker in batch:
+                        if ticker not in results:
+                            results[ticker] = 0
             except KalshiAPIError as e:
                 logger.error("[collect] Batch candlestick error: %s", e)
                 for ticker in batch:
@@ -298,5 +307,6 @@ def _parse_ts(ts_str: str) -> Optional[int]:
         return None
     try:
         return int(pd.to_datetime(ts_str, utc=True).timestamp())
-    except Exception:
+    except (ValueError, TypeError) as e:
+        logger.warning("Failed to parse timestamp %r: %s", ts_str, e)
         return None

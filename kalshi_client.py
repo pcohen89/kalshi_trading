@@ -479,6 +479,8 @@ class KalshiClient:
         Only works for live (non-historical) markets.
         Returns: {"candlesticks": {ticker: [...]}}
         """
+        if not tickers:
+            raise KalshiAPIError("tickers list must not be empty")
         params: dict = {
             "tickers": ",".join(tickers),
             "period_interval": period_interval,

@@ -9,11 +9,14 @@ data. Two CSV files are maintained:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 class DataStoreError(Exception):
@@ -63,6 +66,11 @@ class DataStore:
             try:
                 settlement_cents = round(float(settlement_dollars) * 100)
             except (TypeError, ValueError):
+                logger.warning(
+                    "Invalid settlement_value_dollars for ticker %s: %r — storing 0",
+                    m.get("ticker"),
+                    settlement_dollars,
+                )
                 settlement_cents = 0
 
             new_rows.append({
@@ -108,7 +116,12 @@ class DataStore:
 
         new_rows = []
         for c in candles:
-            ts = c.get("end_period_ts", 0)
+            ts = c.get("end_period_ts")
+            if not ts:
+                logger.warning(
+                    "Candle missing end_period_ts for ticker %s — skipping: %r", ticker, c
+                )
+                continue
             period_end_ts = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
             price = c.get("price", {})
             yes_bid = c.get("yes_bid", {})
@@ -126,6 +139,9 @@ class DataStore:
                 "yes_bid_cents": yes_bid.get("close", 0),
                 "yes_ask_cents": yes_ask.get("close", 0),
             })
+
+        if not new_rows:
+            return 0
 
         new_df = pd.DataFrame(new_rows, columns=self.CANDLES_COLUMNS)
         key_cols = ["ticker", "period_end_ts", "granularity"]
